@@ -1,0 +1,21 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compilar la libreria CCSDS del satelite (C++)
+        run: |
+          mkdir -p build
+          g++ -std=c++17 -Wall -Wextra -Werror -Isatellite/satellite_f1 \
+            satellite/satellite_f1/ccsds.cpp tests/native/ccsds_cli.cpp -o build/ccsds_cli
+      - name: Tests de tierra e interoperabilidad
+        run: python -m unittest discover -s tests -v
