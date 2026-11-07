@@ -12,10 +12,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Compilar la libreria CCSDS del satelite (C++)
+      - name: Dependencias (mbedTLS para el satelite, cryptography para tierra)
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q libmbedtls-dev
+          pip install cryptography
+      - name: Compilar las librerias del satelite (C++)
         run: |
           mkdir -p build
           g++ -std=c++17 -Wall -Wextra -Werror -Isatellite/satellite_f1 \
             satellite/satellite_f1/ccsds.cpp tests/native/ccsds_cli.cpp -o build/ccsds_cli
+          g++ -std=c++17 -Wall -Wextra -Werror -Isatellite/satellite_f2 \
+            satellite/satellite_f2/ccsds.cpp satellite/satellite_f2/sdls.cpp \
+            tests/native/sdls_cli.cpp -lmbedcrypto -o build/sdls_cli
       - name: Tests de tierra e interoperabilidad
         run: python -m unittest discover -s tests -v

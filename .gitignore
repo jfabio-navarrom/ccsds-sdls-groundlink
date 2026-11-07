@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 .venv/
 build/
+ground/keys_f2.json
+ground/state_f2.json

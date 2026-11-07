@@ -21,6 +21,7 @@ TM_PONG = (17, 2)
 TM_ACK_OK = (1, 7)       # telecomando ejecutado
 TM_ACK_FAIL = (1, 2)     # telecomando rechazado (con codigo de motivo)
 TM_HK = (3, 25)          # informe de housekeeping
+TM_SEC_EVENT = (5, 4)    # evento de seguridad (fase 2): el satelite rechazo una trama
 
 FAIL_CODES = {
     1: "trama demasiado corta",
@@ -32,9 +33,17 @@ FAIL_CODES = {
     10: "paquete mal formado",
     11: "servicio desconocido",
     12: "datos de aplicacion incorrectos",
+    20: "sin SDLS o SPI desconocido",
+    21: "MAC invalida",
+    22: "repeticion (replay)",
+    23: "demasiado corta para SDLS",
 }
 
 HK_FORMAT = ">IHHB3BbI"   # uptime, TC aceptados, TC rechazados, ultima secuencia, R, G, B, RSSI, memoria libre
+# Fase 2: ademas, rechazos de seguridad por motivo (SPI, MAC, replay)
+HK_F2_FORMAT = ">IHHHHHB3BbI"
+# Evento de seguridad: codigo, N(S) de la trama, IP y puerto de origen, contador del IV
+SEC_EVENT_FORMAT = ">BB4sHQ"
 
 
 def build_tc_packet(service: tuple, seq_count: int, app_data: bytes = b"") -> bytes:
@@ -70,6 +79,16 @@ def decode_tm_packet(pkt: SpacePacket) -> str:
         motivo = FAIL_CODES.get(code, f"codigo {code}")
         quien = "trama" if seq == 0xFFFF else f"paquete #{seq}"
         return f"RECHAZADO: {quien}, motivo: {motivo}"
+    if service == TM_SEC_EVENT and len(app) >= struct.calcsize(SEC_EVENT_FORMAT):
+        ev = decode_sec_event(app)
+        return (f"EVENTO DE SEGURIDAD: trama rechazada ({ev.reason}) desde {ev.source}"
+                f", N(S)={ev.frame_seq}, IV #{ev.iv_counter}")
+    if service == TM_HK and len(app) == struct.calcsize(HK_F2_FORMAT):
+        hk = decode_hk_f2(app)
+        r, g, b = hk.payload_rgb
+        return (f"HK: uptime {hk.uptime_s} s | TC aceptados {hk.tc_accepted} | "
+                f"rechazados {hk.tc_rejected} | seguridad: SPI {hk.sec_spi}, MAC {hk.sec_mac}, "
+                f"replay {hk.sec_replay} | carga util ({r},{g},{b}) | RSSI {hk.rssi_dbm} dBm")
     if service == TM_HK and len(app) >= struct.calcsize(HK_FORMAT):
         hk = decode_hk(app)
         r, g, b = hk.payload_rgb
@@ -82,3 +101,30 @@ def decode_tm_packet(pkt: SpacePacket) -> str:
 def decode_hk(app: bytes) -> Housekeeping:
     up, ok, bad, seq, r, g, b, rssi, heap = struct.unpack(HK_FORMAT, app[:struct.calcsize(HK_FORMAT)])
     return Housekeeping(up, ok, bad, seq, (r, g, b), rssi, heap)
+
+
+@dataclass
+class HousekeepingF2(Housekeeping):
+    sec_spi: int = 0
+    sec_mac: int = 0
+    sec_replay: int = 0
+
+
+def decode_hk_f2(app: bytes) -> HousekeepingF2:
+    up, ok, bad, spi, mac, rep, seq, r, g, b, rssi, heap = struct.unpack(HK_F2_FORMAT, app)
+    return HousekeepingF2(up, ok, bad, seq, (r, g, b), rssi, heap, spi, mac, rep)
+
+
+@dataclass
+class SecurityEvent:
+    code: int
+    reason: str
+    frame_seq: int
+    source: str
+    iv_counter: int
+
+
+def decode_sec_event(app: bytes) -> SecurityEvent:
+    code, seq, ip, port, iv = struct.unpack(SEC_EVENT_FORMAT, app[:struct.calcsize(SEC_EVENT_FORMAT)])
+    return SecurityEvent(code, FAIL_CODES.get(code, f"codigo {code}"), seq,
+                         f"{'.'.join(str(b) for b in ip)}:{port}", iv)

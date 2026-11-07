@@ -165,6 +165,19 @@ class TmFrame:
     clcw: Clcw
 
 
+def packets_from_data(data: bytes, fhp: int = 0) -> list:
+    """Extrae los Space Packets utiles (sin relleno) del campo de datos de una trama TM."""
+    packets = []
+    pos = fhp
+    while pos + SP_HEADER_LEN < len(data):
+        length = SP_HEADER_LEN + ((data[pos + 4] << 8) | data[pos + 5]) + 1
+        pkt = parse_space_packet(data[pos:pos + length])
+        if pkt.apid != APID_IDLE:
+            packets.append(pkt)
+        pos += length
+    return packets
+
+
 def parse_tm_frame(buf: bytes) -> TmFrame:
     if len(buf) != TM_FRAME_LEN:
         raise CcsdsError(f"una trama TM debe medir {TM_FRAME_LEN} bytes")
@@ -177,15 +190,7 @@ def parse_tm_frame(buf: bytes) -> TmFrame:
     ocf_present = buf[1] & 1
     fhp = ((buf[4] & 0x07) << 8) | buf[5]
 
-    data = buf[TM_HEADER_LEN:TM_HEADER_LEN + TM_DATA_LEN]
-    packets = []
-    pos = fhp
-    while pos + SP_HEADER_LEN < len(data):
-        length = SP_HEADER_LEN + ((data[pos + 4] << 8) | data[pos + 5]) + 1
-        pkt = parse_space_packet(data[pos:pos + length])
-        if pkt.apid != APID_IDLE:
-            packets.append(pkt)
-        pos += length
+    packets = packets_from_data(buf[TM_HEADER_LEN:TM_HEADER_LEN + TM_DATA_LEN], fhp)
 
     word = int.from_bytes(buf[TM_HEADER_LEN + TM_DATA_LEN:TM_HEADER_LEN + TM_DATA_LEN + 4], "big")
     return TmFrame(scid=scid, vcid=vcid, mc_count=buf[2], vc_count=buf[3],
