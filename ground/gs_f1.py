@@ -126,7 +126,13 @@ def main(argv=None) -> int:
     p.add_argument("--ver-hk", action="store_true", help="mostrar cada HK periodico (cada 5 s)")
     args = p.parse_args(argv)
 
-    gs = GroundStation(args.sat, args.sat_port, args.local_port)
+    try:
+        gs = GroundStation(args.sat, args.sat_port, args.local_port)
+    except OSError:
+        print(f"El puerto {args.local_port} ya esta en uso: seguramente tienes otra consola de tierra"
+              " abierta. Cierrala (escribe 'salir' o pulsa Ctrl+C) o usa otro puerto:"
+              f" --local-port {args.local_port + 1}")
+        return 1
     threading.Thread(target=gs.receive_loop, args=(args.ver_hk,), daemon=True).start()
 
     print(f"Estacion de tierra lista. Satelite en {args.sat}:{args.sat_port}, SCID 0x{frames.SCID:03X}.")
