@@ -4,6 +4,12 @@ Asegurando un enlace tierra-satélite de extremo a extremo con CCSDS y SDLS, usa
 
 > **Estado: fase 0 de 4.** El enlace funciona por UDP y todavía **no tiene seguridad, a propósito**: es la línea base vulnerable que la fase 2 protegerá con SDLS (CCSDS 355.0-B).
 
+## El "antes": sin SDLS, cualquiera manda
+
+![Demo fase 0: la estación de tierra pone la carga útil en verde y un atacante sin claves la pone en rojo](docs/media/demo-f0-antes.gif)
+
+La estación de tierra pone la carga útil (la pantalla) en verde. Después, un script atacante que no conoce ningún secreto inyecta un telecomando y el satélite lo acepta: la pantalla pasa a rojo. En la fase 2, este mismo ataque debe ser rechazado y quedar registrado en la telemetría.
+
 ## Qué hay ahora
 
 | Pieza | Archivo | Qué hace |
