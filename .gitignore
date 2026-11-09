@@ -5,3 +5,6 @@ __pycache__/
 build/
 ground/keys_f2.json
 ground/state_f2.json
+ground/keys_f3.json
+ground/keys_f3.json.tmp
+ground/state_f3.json

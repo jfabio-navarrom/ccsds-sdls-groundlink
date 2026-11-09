@@ -143,6 +143,7 @@ class Clcw:
     wait: bool
     retransmit: bool
     report_value: int   # V(R): siguiente numero de secuencia que espera el satelite
+    farm_b: int = 0     # contador de tramas BD/BC aceptadas (2 bits)
 
 
 def parse_clcw(word: int) -> Clcw:
@@ -152,6 +153,7 @@ def parse_clcw(word: int) -> Clcw:
         wait=bool((word >> 12) & 1),
         retransmit=bool((word >> 11) & 1),
         report_value=word & 0xFF,
+        farm_b=(word >> 9) & 0x03,
     )
 
 

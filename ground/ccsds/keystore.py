@@ -56,3 +56,72 @@ class IvCounter:
         except OSError:
             pass
         return self.last
+
+
+# ------------------------------- Fase 3 ---------------------------------
+
+KEYS_F3_PATH = os.path.join(GROUND_DIR, "keys_f3.json")
+STATE_F3_PATH = os.path.join(GROUND_DIR, "state_f3.json")
+
+
+class KeyStoreF3:
+    """
+    Claves de la fase 3, en ground/keys_f3.json (NUNCA se sube a GitHub):
+      kek       clave maestra: solo envuelve claves nuevas (OTAR)
+      active    {id, tc, tm}: claves de trafico en uso
+      pending   {id, tc, tm} o null: subidas pero todavia no activadas
+      retired   IDs ya retirados (las claves en si se borran)
+    """
+
+    def __init__(self, path: str = KEYS_F3_PATH):
+        self.path = path
+        if not os.path.exists(path):
+            raise KeysMissing(
+                "No encuentro las claves de la fase 3 (ground/keys_f3.json). Generalas con:\n"
+                "    py tools\\gen_keys_f3.py\n"
+                "y copia en secrets.h del satelite las tres lineas que imprime.")
+        with open(path, encoding="utf-8") as fh:
+            self.data = json.load(fh)
+
+    @staticmethod
+    def create(path: str, kek: bytes, tc: bytes, tm: bytes) -> None:
+        data = {"kek": kek.hex(), "active": {"id": 1, "tc": tc.hex(), "tm": tm.hex()},
+                "pending": None, "retired": []}
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2)
+
+    def save(self) -> None:
+        tmp = self.path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(self.data, fh, indent=2)
+        os.replace(tmp, self.path)
+
+    @property
+    def kek(self) -> bytes:
+        return bytes.fromhex(self.data["kek"])
+
+    @property
+    def active_id(self) -> int:
+        return self.data["active"]["id"]
+
+    def active(self) -> tuple:
+        a = self.data["active"]
+        return bytes.fromhex(a["tc"]), bytes.fromhex(a["tm"])
+
+    def pending(self):
+        p = self.data.get("pending")
+        if not p:
+            return None
+        return p["id"], bytes.fromhex(p["tc"]), bytes.fromhex(p["tm"])
+
+    def set_pending(self, key_id: int, tc: bytes, tm: bytes) -> None:
+        self.data["pending"] = {"id": key_id, "tc": tc.hex(), "tm": tm.hex()}
+        self.save()
+
+    def activate_pending(self) -> int:
+        p = self.data["pending"]
+        self.data["retired"].append(self.data["active"]["id"])
+        self.data["active"] = p
+        self.data["pending"] = None
+        self.save()
+        return p["id"]

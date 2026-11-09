@@ -24,5 +24,8 @@ jobs:
           g++ -std=c++17 -Wall -Wextra -Werror -Isatellite/satellite_f2 \
             satellite/satellite_f2/ccsds.cpp satellite/satellite_f2/sdls.cpp \
             tests/native/sdls_cli.cpp -lmbedcrypto -o build/sdls_cli
+          g++ -std=c++17 -Wall -Wextra -Werror -Isatellite/satellite_f3 \
+            satellite/satellite_f3/ccsds.cpp satellite/satellite_f3/sdls.cpp satellite/satellite_f3/farm.cpp \
+            tests/native/f3_cli.cpp -lmbedcrypto -o build/f3_cli
       - name: Tests de tierra e interoperabilidad
         run: python -m unittest discover -s tests -v

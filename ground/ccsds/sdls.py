@@ -76,18 +76,25 @@ class SecurityAssociation:
         self.aead = AESGCM(key)
         self.last_iv = bytes(IV_LEN)
 
+    def set_key(self, key: bytes) -> None:
+        """Rotacion: cambia la clave y conserva el estado anti-replay."""
+        if len(key) != KEY_LEN:
+            raise ValueError("la clave AES-256 debe tener 32 bytes")
+        self.aead = AESGCM(key)
+
 
 # ------------------------------ Tramas TC -------------------------------
 
 def build_secure_tc_frame(sa: SecurityAssociation, packet: bytes, seq: int, iv_counter: int,
-                          scid: int = SCID, vcid: int = VCID) -> bytes:
-    """Lo usa la tierra: Space Packet -> trama TC cifrada y autenticada."""
+                          scid: int = SCID, vcid: int = VCID, bypass: bool = False,
+                          control: bool = False) -> bytes:
+    """Lo usa la tierra: Space Packet (o comando de control) -> trama TC cifrada y autenticada."""
     iv = iv_from_counter(iv_counter)
     sec_header = sa.spi.to_bytes(2, "big") + iv
     total = TC_HEADER_LEN + SEC_HEADER_LEN + len(packet) + MAC_LEN + FECF_LEN
     length = total - 1
     header = bytes([
-        (scid >> 8) & 0x03,
+        (int(bypass) << 5) | (int(control) << 4) | ((scid >> 8) & 0x03),
         scid & 0xFF,
         ((vcid & 0x3F) << 2) | ((length >> 8) & 0x03),
         length & 0xFF,
@@ -183,3 +190,30 @@ def parse_secure_tm_frame(sa: SecurityAssociation, buf: bytes, check_replay: boo
                         mc_count=buf[2], vc_count=buf[3],
                         packets=frames.packets_from_data(plain, fhp), clcw=frames.parse_clcw(word))
     return SecureTm(frame=tm, iv=iv)
+
+
+# ------------------------- Gestion de claves (OTAR) -------------------------
+
+OTAR_BLOCK_LEN = IV_LEN + 2 * KEY_LEN + MAC_LEN   # 92
+
+
+def _otar_aad(key_id: int) -> bytes:
+    return b"OTAR" + SCID.to_bytes(2, "big") + bytes([key_id & 0xFF])
+
+
+def otar_wrap(kek: bytes, key_id: int, tc_key: bytes, tm_key: bytes, iv: bytes = None) -> bytes:
+    """Envuelve las claves nuevas con la clave maestra: [IV 12][cifrado 64][MAC 16]."""
+    import os
+    iv = iv or os.urandom(IV_LEN)
+    return iv + AESGCM(kek).encrypt(iv, tc_key + tm_key, _otar_aad(key_id))
+
+
+def otar_unwrap(kek: bytes, key_id: int, block: bytes) -> tuple:
+    if len(block) != OTAR_BLOCK_LEN:
+        raise ValueError("bloque OTAR de longitud incorrecta")
+    keys = AESGCM(kek).decrypt(block[:IV_LEN], block[IV_LEN:], _otar_aad(key_id))  # InvalidTag si no
+    return keys[:KEY_LEN], keys[KEY_LEN:]
+
+
+def kek_fingerprint(kek: bytes) -> bytes:
+    return AESGCM(kek).encrypt(bytes(IV_LEN), b"", b"FP")[:8]
