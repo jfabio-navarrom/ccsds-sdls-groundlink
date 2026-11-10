@@ -1,12 +1,12 @@
-# Base de datos de Security Associations (SA) del enlace ccsds-sdls-groundlink,
-# en el formato de ccsds-policy-as-code (apiVersion sdls.portfolio/v1).
+# Security Association (SA) database of the ccsds-sdls-groundlink link,
+# in the ccsds-policy-as-code format (apiVersion sdls.portfolio/v1).
 #
-# Describe lo que esta IMPLEMENTADO en la fase 3, no lo ideal: si el codigo
-# cambia, tests/test_sa_database.py falla hasta que este archivo se actualice.
-# Las desviaciones que detecta el escaneo de politicas estan aceptadas, con
-# justificacion, en riesgos-aceptados.yaml.
+# It describes what is IMPLEMENTED in phase 3, not the ideal. If the code
+# changes, tests/test_sa_database.py fails until this file is updated.
+# The deviations found by the policy scan are accepted, with a
+# justification, in accepted-risks.yaml.
 #
-# Aqui no hay material de claves: solo referencias.
+# There is no key material here: only references.
 
 apiVersion: sdls.portfolio/v1
 kind: SecurityAssociationDatabase
@@ -16,12 +16,12 @@ metadata:
   legacy_implementation: false
 
 virtual_channels:
-  - name: tc-comandos
+  - name: tc-commands
     protocol: TC
     gvcid: { tfvn: 0, scid: 197, vcid: 0 }   # SCID 0x0C5
     carries: telecommand
-    cop: true                                # COP-1: FOP en tierra, FARM-1 a bordo
-  - name: tm-telemetria
+    cop: true                                # COP-1: FOP on ground, FARM-1 on board
+  - name: tm-telemetry
     protocol: TM
     gvcid: { tfvn: 0, scid: 197, vcid: 0 }
     carries: telemetry
@@ -29,23 +29,23 @@ virtual_channels:
 
 security_associations:
   - spi: 1
-    description: Telecomandos, cifrado autenticado
+    description: Telecommands, authenticated encryption
     protocol: TC
     gvcids:
       - { tfvn: 0, scid: 197, vcid: 0 }
     service: authenticated_encryption
     algorithm: { cipher: AES, mode: GCM, key_bits: 256 }
     iv_length_octets: 12
-    # El IV (contador de 64 bits) hace de numero anti-replay: no hay un campo
-    # de secuencia separado en la Security Header, ni ventana (se acepta
-    # cualquier IV mayor que el ultimo). Ver ADR-009 y riesgos-aceptados.yaml.
+    # The IV (64 bit counter) works as the anti-replay number: there is no
+    # separate sequence field in the Security Header, and no window (any IV
+    # higher than the last one is accepted). See ADR-009 and accepted-risks.yaml.
     sequence_number: { length_octets: 0, window: 0 }
     pad_length_octets: 0
     mac_length_octets: 16
     key_ref: file://ground/keys_f3.json#active.tc
 
   - spi: 2
-    description: Telemetria, cifrado autenticado
+    description: Telemetry, authenticated encryption
     protocol: TM
     gvcids:
       - { tfvn: 0, scid: 197, vcid: 0 }

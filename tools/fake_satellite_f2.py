@@ -1,14 +1,14 @@
 """
-Satelite simulado en Python - fase 2 (CCSDS + SDLS).
+Simulated satellite in Python - phase 2 (CCSDS + SDLS).
 
-Reproduce en el PC el comportamiento de satellite/satellite_f2/satellite_f2.ino
-con las claves de ground/keys_f2.json. Sirve para practicar sin la placa y
-lo usan los tests automaticos.
+Does on the PC the same as satellite/satellite_f2/satellite_f2.ino, with the
+keys from ground/keys_f2.json. Useful to practice without the board, and the
+automatic tests use it.
 
-Diferencia con la placa: el estado anti-replay vive solo en memoria (la placa
-lo guarda en la flash).
+Difference with the board: the anti-replay state is only in memory (the board
+saves it in flash).
 
-Uso:
+Usage:
     py tools\\fake_satellite_f2.py
     py ground\\gs_f2.py --sat 127.0.0.1
 """
@@ -68,10 +68,10 @@ class FakeSatellite:
         try:
             frames.parse_tc_frame(data)
             if ((data[0] & 0x03) << 8 | data[1]) != frames.SCID or data[2] >> 2 != frames.VCID:
-                raise CcsdsError("SCID o canal ajeno")
+                raise CcsdsError("SCID or channel is not ours")
         except CcsdsError as e:
             self.rejected += 1
-            print(f"[SIM] Trama descartada: {e}")
+            print(f"[SIM] Frame discarded: {e}")
             return
         try:
             tc = sdls.process_secure_tc(self.tc_sa, data)
@@ -79,7 +79,7 @@ class FakeSatellite:
             code = sdls.SEC_ERR_SPI if e.code == sdls.SEC_ERR_LENGTH else e.code
             self.sec[code] += 1
             iv = sdls.iv_to_counter(data[7:19]) if e.code in (sdls.SEC_ERR_MAC, sdls.SEC_ERR_REPLAY) else 0
-            print(f"[SIM] SEGURIDAD: rechazada ({e}) desde {addr}. No se le responde.")
+            print(f"[SIM] SECURITY: rejected ({e}) from {addr}. No answer is sent.")
             ip = socket.inet_aton(addr[0])
             self.send_tm(services.TM_SEC_EVENT,
                          struct.pack(services.SEC_EVENT_FORMAT, e.code, data[4], ip, addr[1], iv))
@@ -90,7 +90,7 @@ class FakeSatellite:
         try:
             p = frames.parse_space_packet(tc.packet)
             if len(tc.packet) != 6 + len(p.data) or p.type != 1 or p.apid != frames.APID_SAT or len(p.data) < 2:
-                raise CcsdsError("paquete mal formado")
+                raise CcsdsError("bad packet")
         except CcsdsError:
             self.rejected += 1
             return self.send_tm(services.TM_ACK_FAIL, struct.pack(">HB", 0xFFFF, 10))
@@ -103,13 +103,13 @@ class FakeSatellite:
             return self.send_tm(services.TM_ACK_FAIL, struct.pack(">HB", p.seq_count, 11))
 
         self.accepted += 1
-        print(f"[SIM] TC autenticado y aceptado: trama #{tc.frame.seq}, IV #{sdls.iv_to_counter(tc.iv)},"
-              f" servicio {service}")
+        print(f"[SIM] TC authenticated and accepted: frame #{tc.frame.seq}, IV #{sdls.iv_to_counter(tc.iv)},"
+              f" service {service}")
         if service == services.TC_PING:
             self.send_tm(services.TM_PONG)
         elif service == services.TC_SET_COLOR:
             self.payload = tuple(app)
-            print(f"[SIM] Carga util: color = {self.payload}")
+            print(f"[SIM] Payload: color = {self.payload}")
             self.send_tm(services.TM_ACK_OK, struct.pack(">H", p.seq_count))
         else:
             self.send_hk()
@@ -125,7 +125,7 @@ class FakeSatellite:
         self.handle(data, addr)
 
     def run(self):
-        print(f"[SIM] Satelite simulado (fase 2, SDLS) escuchando en {self.sock.getsockname()}")
+        print(f"[SIM] Simulated satellite (phase 2, SDLS) listening on {self.sock.getsockname()}")
         while True:
             self.step()
 

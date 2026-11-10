@@ -1,25 +1,25 @@
 // =====================================================================
-//  satellite_f2.ino  -  Fase 2 del proyecto ccsds-sdls-groundlink
-//  Placa: Waveshare ESP32-C5-Touch-LCD-2.8
+//  satellite_f2.ino  -  Phase 2 of the ccsds-sdls-groundlink project
+//  Board: Waveshare ESP32-C5-Touch-LCD-2.8
 //
-//  Novedad respecto a la fase 1: el enlace esta protegido con SDLS
-//  (CCSDS 355.0-B) usando AES-256-GCM:
-//    - cada TC tiene que llevar una MAC valida (clave TC, SPI 1)
-//    - el IV de cada TC tiene que ser mayor que el anterior (anti-replay),
-//      y el ultimo IV aceptado se guarda en la flash (NVS): reiniciar la
-//      placa no reabre la puerta al replay
-//    - toda la TM va cifrada y autenticada (clave TM, SPI 2)
-//    - el satelite SOLO habla con quien ha demostrado tener la clave: a un
-//      desconocido no le responde nada. Lo que hace es avisar a la tierra
-//      con un EVENTO DE SEGURIDAD (servicio 5,4) y contarlo en el HK
+//  New compared to phase 1: the link is protected with SDLS
+//  (CCSDS 355.0-B) with AES-256-GCM:
+//    - every TC must have a valid MAC (TC key, SPI 1)
+//    - the IV of each TC must be higher than the last one (anti-replay),
+//      and the last accepted IV is saved in flash (NVS): resetting the
+//      board does not open the door to replay again
+//    - all TM is encrypted and authenticated (TM key, SPI 2)
+//    - the satellite ONLY talks to who proved to have the key: to an
+//      unknown sender it answers nothing. What it does is warn the ground
+//      with a SECURITY EVENT (service 5,4) and count it in the HK
 //
-//  Pantalla:
-//    - franja VERDE arriba         = SDLS activo
-//    - recuadro central            = carga util (color comandado)
-//    - OK / ERR / SEC              = TC aceptados, tramas mal formadas,
-//                                    tramas rechazadas por seguridad
-//    - franja de abajo             = blanca si el TC es valido, roja si se
-//                                    rechaza por seguridad, ambar si llega rota
+//  Screen:
+//    - GREEN top bar               = SDLS active
+//    - center box                  = payload (commanded color)
+//    - OK / ERR / SEC              = TC accepted, bad frames,
+//                                    frames rejected for security
+//    - bottom bar                  = white if the TC is valid, red if it
+//                                    is rejected for security, amber if it is broken
 // =====================================================================
 
 #include <WiFi.h>
@@ -30,16 +30,16 @@
 #include "ccsds.h"
 #include "sdls.h"
 #include "ui.h"
-#include "secrets.h"   // WIFI_SSID, WIFI_PASS, SDLS_TC_KEY, SDLS_TM_KEY (no se sube a GitHub)
+#include "secrets.h"   // WIFI_SSID, WIFI_PASS, SDLS_TC_KEY, SDLS_TM_KEY (not pushed to GitHub)
 
 #if !defined(SDLS_TC_KEY) || !defined(SDLS_TM_KEY)
-#error "Faltan las claves en secrets.h. Ejecuta en el PC: py tools/gen_keys_f2.py y copia las dos lineas #define que imprime."
+#error "Keys are missing in secrets.h. Run on the PC: py tools/gen_keys_f2.py and copy the two #define lines it prints."
 #endif
 
 using namespace ccsds;
 using namespace sdls;
 
-// Servicios PUS-lite (ver ground/ccsds/services.py)
+// PUS-lite services (see ground/ccsds/services.py)
 const uint8_t SVC_TEST = 17, SUB_PING = 1, SUB_PONG = 2;
 const uint8_t SVC_PAYLOAD = 8, SUB_SET_COLOR = 1;
 const uint8_t SVC_HK = 3, SUB_HK_REPORT = 25, SUB_HK_REQUEST = 27;
@@ -49,7 +49,7 @@ const uint8_t FAIL_BAD_PACKET = 10, FAIL_UNKNOWN_SERVICE = 11, FAIL_BAD_DATA = 1
 
 const uint16_t TC_PORT = 10025;
 const unsigned long HK_PERIOD_MS = 5000;
-const uint64_t TM_IV_BLOCK = 1024;   // IV de TM reservados de golpe en la flash
+const uint64_t TM_IV_BLOCK = 1024;   // TM IVs reserved at once in flash
 
 const uint8_t TC_KEY[KEY_LEN] = SDLS_TC_KEY;
 const uint8_t TM_KEY[KEY_LEN] = SDLS_TM_KEY;
@@ -60,7 +60,7 @@ SecurityAssociation tcSa, tmSa;
 uint8_t rx[256];
 uint8_t plain[256];
 
-// Estado de a bordo
+// On-board state
 uint8_t mcCount = 0, vcCount = 0;
 uint16_t tmSeq = 0;
 uint16_t tcAccepted = 0, tcRejected = 0;
@@ -69,7 +69,7 @@ uint8_t lastFrameSeq = 0;
 uint8_t payload[3] = {0, 0, 0};
 uint64_t tmIv = 0, tmIvReserved = 0;
 
-// La estacion de tierra: solo cambia con un TC autenticado
+// The ground station: it only changes with an authenticated TC
 IPAddress groundIP;
 uint16_t groundPort = 0;
 bool haveGround = false;
@@ -79,7 +79,7 @@ unsigned long flashUntil = 0;
 const uint16_t COLOR_GRIS = 0x2104;
 const uint16_t COLOR_BLANCO = 0xFFFF;
 
-// ------------------------------ Pantalla ------------------------------
+// ------------------------------ Screen --------------------------------
 
 void drawPayload() {
   fillRect(16, 52, 208, 150, rgb565(payload[0], payload[1], payload[2]));
@@ -101,14 +101,14 @@ void flashBar(uint16_t color) {
   flashUntil = millis() + 200;
 }
 
-// ------------------------- Memoria permanente -------------------------
+// ------------------------- Permanent memory ---------------------------
 
 void saveLastTcIv() {
   nvs.putBytes("tciv", tcSa.lastIv, IV_LEN);
 }
 
-// Nunca repetir un IV de TM, ni siquiera tras un reinicio: reservamos
-// bloques de IV en la flash y empezamos siempre por encima de lo reservado.
+// Never repeat a TM IV, not even after a reset: we reserve
+// blocks of IVs in flash and always start above what was reserved.
 uint64_t nextTmIv() {
   if (tmIv >= tmIvReserved) {
     tmIvReserved = tmIv + TM_IV_BLOCK;
@@ -117,12 +117,12 @@ uint64_t nextTmIv() {
   return ++tmIv;
 }
 
-// ----------------------------- Telemetria -----------------------------
+// ----------------------------- Telemetry ------------------------------
 
 static void put16(uint8_t* p, uint16_t v) { p[0] = v >> 8; p[1] = v & 0xFF; }
 static void put32(uint8_t* p, uint32_t v) { p[0] = v >> 24; p[1] = v >> 16; p[2] = v >> 8; p[3] = v; }
 
-// Toda la TM va a la estacion de tierra autenticada, nunca a un desconocido
+// All TM goes to the authenticated ground station, never to an unknown sender
 void sendTm(uint8_t svc, uint8_t sub, const uint8_t* app, size_t appLen) {
   if (!haveGround || appLen > 32) return;
   uint8_t data[2 + 32];
@@ -162,7 +162,7 @@ void sendHk() {
   sendTm(SVC_HK, SUB_HK_REPORT, app, sizeof(app));
 }
 
-// Evento de seguridad: que se ha rechazado, de donde venia y con que IV
+// Security event: what was rejected, where it came from and with which IV
 void sendSecurityEvent(uint8_t code, uint8_t frameSeq, IPAddress ip, uint16_t port, const uint8_t* iv) {
   uint8_t app[16];
   app[0] = code;
@@ -174,12 +174,12 @@ void sendSecurityEvent(uint8_t code, uint8_t frameSeq, IPAddress ip, uint16_t po
   sendTm(SVC_EVENT, SUB_EVENT_HIGH, app, sizeof(app));
 }
 
-// ----------------------------- Telecomandos ---------------------------
+// ----------------------------- Telecommands ---------------------------
 
 void rejectLink(TcError err) {
-  // Trama rota (CRC, longitud...): es un error de enlace, no se responde
+  // Broken frame (CRC, length...): it is a link error, no answer
   tcRejected++;
-  Serial.printf("[SAT] Trama descartada (%s)\n", tcErrorName(err));
+  Serial.printf("[SAT] Frame dropped (%s)\n", tcErrorName(err));
   flashBar(rgb565(255, 140, 0));
   drawCounters();
 }
@@ -188,7 +188,7 @@ void rejectSecurity(SecError err, const TcFrame& f, IPAddress ip, uint16_t port,
   if (err == SEC_ERR_MAC) secMac++;
   else if (err == SEC_ERR_REPLAY) secReplay++;
   else secSpi++;
-  Serial.printf("[SAT] SEGURIDAD: trama rechazada (%s) desde %s:%u. Al emisor no se le responde.\n",
+  Serial.printf("[SAT] SECURITY: frame rejected (%s) from %s:%u. No answer to the sender.\n",
                 secErrorName(err), ip.toString().c_str(), (unsigned)port);
   sendSecurityEvent((uint8_t)err, f.seq, ip, port, iv);
   flashBar(rgb565(255, 0, 0));
@@ -196,9 +196,9 @@ void rejectSecurity(SecError err, const TcFrame& f, IPAddress ip, uint16_t port,
 }
 
 void rejectAuthenticated(uint16_t pktSeq, uint8_t code, const char* why) {
-  // TC autenticado pero con contenido incorrecto: viene de la tierra legitima
+  // Authenticated TC but with wrong content: it comes from the real ground
   tcRejected++;
-  Serial.printf("[SAT] TC autenticado pero RECHAZADO (%s)\n", why);
+  Serial.printf("[SAT] TC authenticated but REJECTED (%s)\n", why);
   uint8_t app[3];
   put16(app, pktSeq);
   app[2] = code;
@@ -208,7 +208,7 @@ void rejectAuthenticated(uint16_t pktSeq, uint8_t code, const char* why) {
 }
 
 void handleTc(const uint8_t* buf, size_t len, IPAddress ip, uint16_t port) {
-  // 1) Trama TC (CRC, SCID, canal...)
+  // 1) TC frame (CRC, SCID, channel...)
   TcFrame f;
   TcError err = parseTcFrame(buf, len, f);
   if (err != TC_OK) {
@@ -216,7 +216,7 @@ void handleTc(const uint8_t* buf, size_t len, IPAddress ip, uint16_t port) {
     return;
   }
 
-  // 2) SDLS: SPI, MAC y anti-replay
+  // 2) SDLS: SPI, MAC and anti-replay
   uint8_t iv[IV_LEN];
   size_t plainLen = 0;
   SecError sec = processTc(tcSa, buf, f, plain, sizeof(plain), plainLen, iv);
@@ -227,16 +227,16 @@ void handleTc(const uint8_t* buf, size_t len, IPAddress ip, uint16_t port) {
   }
   saveLastTcIv();
 
-  // Autenticado: quien lo envio tiene la clave, asi que es la tierra
+  // Authenticated: the sender has the key, so it is the ground station
   groundIP = ip;
   groundPort = port;
   haveGround = true;
   lastFrameSeq = f.seq;
 
-  // 3) Space Packet descifrado
+  // 3) Decrypted Space Packet
   SpacePacket p;
   if (!parseSpacePacket(plain, plainLen, p) || p.type != 1 || p.apid != APID_SAT || p.dataLen < 2) {
-    rejectAuthenticated(0xFFFF, FAIL_BAD_PACKET, "paquete mal formado");
+    rejectAuthenticated(0xFFFF, FAIL_BAD_PACKET, "bad packet");
     return;
   }
 
@@ -245,17 +245,17 @@ void handleTc(const uint8_t* buf, size_t len, IPAddress ip, uint16_t port) {
   size_t appLen = p.dataLen - 2;
 
   if (svc == SVC_PAYLOAD && sub == SUB_SET_COLOR && appLen != 3) {
-    rejectAuthenticated(p.seqCount, FAIL_BAD_DATA, "color sin 3 bytes");
+    rejectAuthenticated(p.seqCount, FAIL_BAD_DATA, "color without 3 bytes");
     return;
   }
   if (!(svc == SVC_TEST && sub == SUB_PING) && !(svc == SVC_PAYLOAD && sub == SUB_SET_COLOR) &&
       !(svc == SVC_HK && sub == SUB_HK_REQUEST)) {
-    rejectAuthenticated(p.seqCount, FAIL_UNKNOWN_SERVICE, "servicio desconocido");
+    rejectAuthenticated(p.seqCount, FAIL_UNKNOWN_SERVICE, "unknown service");
     return;
   }
 
   tcAccepted++;
-  Serial.printf("[SAT] TC autenticado y aceptado: trama #%u, IV #%llu, servicio (%u,%u)\n",
+  Serial.printf("[SAT] TC authenticated and accepted: frame #%u, IV #%llu, service (%u,%u)\n",
                 f.seq, (unsigned long long)ivToCounter(iv), svc, sub);
 
   if (svc == SVC_TEST) {
@@ -266,7 +266,7 @@ void handleTc(const uint8_t* buf, size_t len, IPAddress ip, uint16_t port) {
     uint8_t ack[2];
     put16(ack, p.seqCount);
     sendTm(SVC_VERIF, SUB_ACK_OK, ack, 2);
-    Serial.printf("[SAT] Carga util: color = (%u, %u, %u)\n", payload[0], payload[1], payload[2]);
+    Serial.printf("[SAT] Payload: color = (%u, %u, %u)\n", payload[0], payload[1], payload[2]);
   } else {
     sendHk();
   }
@@ -275,15 +275,15 @@ void handleTc(const uint8_t* buf, size_t len, IPAddress ip, uint16_t port) {
   drawCounters();
 }
 
-// ------------------------------- Arranque -----------------------------
+// ------------------------------- Startup ------------------------------
 
 void setup() {
   Serial.begin(115200);
   delay(1500);
   Serial.println();
-  Serial.println("[SAT] Satelite simulado - fase 2 (CCSDS + SDLS, AES-256-GCM)");
+  Serial.println("[SAT] Simulated satellite - phase 2 (CCSDS + SDLS, AES-256-GCM)");
 
-  if (!Board_IO_Init()) Serial.println("[SAT] AVISO: no responde el expansor de IO");
+  if (!Board_IO_Init()) Serial.println("[SAT] WARNING: the IO expander does not answer");
   LCD_Init();
   Set_Backlight(80);
   fillRect(0, 0, LCD_WIDTH, LCD_HEIGHT, COLOR_GRIS);
@@ -292,30 +292,30 @@ void setup() {
   drawPayload();
   drawCounters();
 
-  // Asociaciones de seguridad y estado anti-replay guardado en la flash
+  // Security associations and anti-replay state saved in flash
   if (!saInit(tcSa, SPI_TC, TC_KEY) || !saInit(tmSa, SPI_TM, TM_KEY)) {
-    Serial.println("[SAT] ERROR: no se pudieron cargar las claves");
+    Serial.println("[SAT] ERROR: the keys could not be loaded");
   }
   nvs.begin("sdls", false);
   if (nvs.getBytesLength("tciv") == IV_LEN) nvs.getBytes("tciv", tcSa.lastIv, IV_LEN);
-  tmIv = nvs.getULong64("tmiv", 0);   // empezamos por encima de todo lo reservado
+  tmIv = nvs.getULong64("tmiv", 0);   // start above everything reserved
   tmIvReserved = tmIv;
-  Serial.printf("[SAT] Anti-replay: ultimo IV de TC aceptado #%llu, siguiente IV de TM > #%llu\n",
+  Serial.printf("[SAT] Anti-replay: last accepted TC IV #%llu, next TM IV > #%llu\n",
                 (unsigned long long)ivToCounter(tcSa.lastIv), (unsigned long long)tmIv);
 
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
-  Serial.print("[SAT] Conectando a la Wi-Fi");
+  Serial.print("[SAT] Connecting to the Wi-Fi");
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
   }
   Serial.println();
-  Serial.print("[SAT] Conectado. MI IP ES: ");
+  Serial.print("[SAT] Connected. MY IP IS: ");
   Serial.println(WiFi.localIP());
 
   udp.begin(TC_PORT);
-  Serial.printf("[SAT] Escuchando tramas TC en UDP %u (SCID 0x%03X, SDLS activo)\n", TC_PORT, SCID);
+  Serial.printf("[SAT] Listening for TC frames on UDP %u (SCID 0x%03X, SDLS active)\n", TC_PORT, SCID);
 
   payload[2] = 0;
   drawPayload();

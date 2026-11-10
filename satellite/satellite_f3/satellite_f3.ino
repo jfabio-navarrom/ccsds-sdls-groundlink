@@ -1,24 +1,24 @@
 // =====================================================================
-//  satellite_f3.ino  -  Fase 3 del proyecto ccsds-sdls-groundlink
-//  Placa: Waveshare ESP32-C5-Touch-LCD-2.8
+//  satellite_f3.ino  -  Phase 3 of the ccsds-sdls-groundlink project
+//  Board: Waveshare ESP32-C5-Touch-LCD-2.8
 //
-//  Sobre la fase 2 (SDLS con AES-256-GCM y anti-replay) anade:
+//  On top of phase 2 (SDLS with AES-256-GCM and anti-replay) it adds:
 //
-//  1) Rotacion de claves en vuelo (OTAR): la tierra sube claves nuevas
-//     cifradas con una clave maestra (KEK) y luego las activa. No hace falta
-//     reflashear la placa si una clave se filtra.
-//  2) FARM-1 (COP-1): los telecomandos AD se ejecutan en orden, sin huecos
-//     ni duplicados. La CLCW de cada trama TM le dice a la tierra que trama
-//     espera el satelite y si tiene que retransmitir.
-//  3) Defensa ante inundacion: los eventos de seguridad tienen un limite de
-//     frecuencia (los que sobran se resumen) y la pantalla se redibuja como
-//     mucho unas pocas veces por segundo, para que un atacante no pueda
-//     saturar al satelite ni a la tierra.
+//  1) In-flight key rotation (OTAR): the ground uploads new keys
+//     encrypted with a master key (KEK) and then activates them. No need to
+//     reflash the board if a key leaks.
+//  2) FARM-1 (COP-1): AD telecommands run in order, with no gaps
+//     and no duplicates. The CLCW of each TM frame tells the ground which frame
+//     the satellite expects, and if it must retransmit.
+//  3) Flood defense: security events have a limit on their
+//     rate (the extra ones are summarized) and the screen is redrawn at
+//     most a few times per second, so an attacker can not
+//     overload the satellite or the ground.
 //
-//  Pantalla:
-//    - franja VERDE arriba = SDLS activo; cuadradito a la derecha = ID de clave
-//    - OK / ERR / SEC      = TC aceptados, tramas rotas o fuera de secuencia,
-//                            rechazos de seguridad
+//  Screen:
+//    - GREEN top bar = SDLS active; small box on the right = key ID
+//    - OK / ERR / SEC      = TC accepted, frames broken or out of sequence,
+//                            security rejections
 // =====================================================================
 
 #include <WiFi.h>
@@ -30,16 +30,16 @@
 #include "sdls.h"
 #include "farm.h"
 #include "ui.h"
-#include "secrets.h"   // WIFI_*, SDLS_KEK, SDLS_TC_KEY, SDLS_TM_KEY (no se sube a GitHub)
+#include "secrets.h"   // WIFI_*, SDLS_KEK, SDLS_TC_KEY, SDLS_TM_KEY (not pushed to GitHub)
 
 #if !defined(SDLS_TC_KEY) || !defined(SDLS_TM_KEY) || !defined(SDLS_KEK)
-#error "Faltan claves en secrets.h. Ejecuta en el PC: py tools/gen_keys_f3.py y copia las tres lineas #define que imprime."
+#error "Keys are missing in secrets.h. Run on the PC: py tools/gen_keys_f3.py and copy the three #define lines it prints."
 #endif
 
 using namespace ccsds;
 using namespace sdls;
 
-// Servicios PUS-lite (ver ground/ccsds/services.py)
+// PUS-lite services (see ground/ccsds/services.py)
 const uint8_t SVC_TEST = 17, SUB_PING = 1, SUB_PONG = 2;
 const uint8_t SVC_PAYLOAD = 8, SUB_SET_COLOR = 1;
 const uint8_t SVC_HK = 3, SUB_HK_REPORT = 25, SUB_HK_REQUEST = 27;
@@ -55,7 +55,7 @@ const uint16_t TC_PORT = 10025;
 const unsigned long HK_PERIOD_MS = 5000;
 const uint64_t TM_IV_BLOCK = 1024;
 
-// Limite de eventos de seguridad: rafaga de 3 y luego 1 por segundo
+// Security event limit: burst of 3 and then 1 per second
 const uint8_t EVENT_BURST = 3;
 const unsigned long EVENT_REFILL_MS = 1000;
 const unsigned long REDRAW_MS = 150;
@@ -72,7 +72,7 @@ farm::State farmState;
 uint8_t rx[256];
 uint8_t plain[256];
 
-// Estado de a bordo
+// On-board state
 uint8_t mcCount = 0, vcCount = 0;
 uint16_t tmSeq = 0;
 uint16_t tcAccepted = 0, tcRejected = 0, farmDiscards = 0;
@@ -81,7 +81,7 @@ uint16_t eventsSuppressed = 0, suppressedPending = 0;
 uint8_t payload[3] = {0, 0, 0};
 uint64_t tmIv = 0, tmIvReserved = 0;
 uint8_t activeKeyId = 1;
-uint8_t pendingKeyId = 0;               // 0 = no hay claves pendientes
+uint8_t pendingKeyId = 0;               // 0 = no pending keys
 uint8_t pendingTc[KEY_LEN], pendingTm[KEY_LEN];
 
 IPAddress groundIP;
@@ -94,7 +94,7 @@ bool countersDirty = false;
 const uint16_t COLOR_GRIS = 0x2104;
 const uint16_t COLOR_BLANCO = 0xFFFF;
 
-// ------------------------------ Pantalla ------------------------------
+// ------------------------------ Screen --------------------------------
 
 void drawPayload() {
   fillRect(16, 52, 208, 150, rgb565(payload[0], payload[1], payload[2]));
@@ -103,7 +103,7 @@ void drawPayload() {
 void drawHeader() {
   fillRect(0, 0, LCD_WIDTH, 40, rgb565(0, 170, 70));
   char id[6];
-  snprintf(id, sizeof(id), "%u", (unsigned)activeKeyId);   // ID de la clave activa
+  snprintf(id, sizeof(id), "%u", (unsigned)activeKeyId);   // ID of the active key
   drawText(200, 8, id, 4, COLOR_BLANCO, rgb565(0, 170, 70));
 }
 
@@ -120,16 +120,16 @@ void drawCounters() {
   lastRedraw = millis();
 }
 
-// Durante una inundacion no redibujamos en cada trama: solo marcamos
+// During a flood we do not redraw on every frame: we only mark
 void markCounters() { countersDirty = true; }
 
 void flashBar(uint16_t color) {
-  if (flashUntil != 0) return;   // ya hay un destello en curso
+  if (flashUntil != 0) return;   // a blink is already running
   fillRect(0, 288, LCD_WIDTH, 32, color);
   flashUntil = millis() + 200;
 }
 
-// ------------------------- Memoria permanente -------------------------
+// ------------------------- Permanent memory ---------------------------
 
 void saveLastTcIv() { nvs.putBytes("tciv", tcSa.lastIv, IV_LEN); }
 
@@ -141,11 +141,11 @@ uint64_t nextTmIv() {
   return ++tmIv;
 }
 
-// Claves activas en la flash: [huella KEK 8][ID 1][TC 32][TM 32]
+// Active keys in flash: [KEK fingerprint 8][ID 1][TC 32][TM 32]
 void saveActiveKeys(const uint8_t tc[KEY_LEN], const uint8_t tm[KEY_LEN]) {
   uint8_t rec[8 + 1 + 2 * KEY_LEN];
   if (!kekFingerprint(kekCtx, rec)) {
-    Serial.println("[SAT] ERROR: no pude calcular la huella de la KEK; las claves no se guardan en la flash");
+    Serial.println("[SAT] ERROR: could not compute the KEK fingerprint; keys are not saved in flash");
     return;
   }
   rec[8] = activeKeyId;
@@ -153,8 +153,8 @@ void saveActiveKeys(const uint8_t tc[KEY_LEN], const uint8_t tm[KEY_LEN]) {
   memcpy(rec + 9 + KEY_LEN, tm, KEY_LEN);
   size_t written = nvs.putBytes("keys", rec, sizeof(rec));
   memset(rec, 0, sizeof(rec));
-  Serial.printf("[SAT] Claves ID %u guardadas en la flash (%s)\n", activeKeyId,
-                written == sizeof(rec) ? "OK" : "ERROR al escribir");
+  Serial.printf("[SAT] Keys ID %u saved in flash (%s)\n", activeKeyId,
+                written == sizeof(rec) ? "OK" : "ERROR while writing");
 }
 
 void loadKeys() {
@@ -165,19 +165,19 @@ void loadKeys() {
     activeKeyId = rec[8];
     saInit(tcSa, SPI_TC, rec + 9);
     saInit(tmSa, SPI_TM, rec + 9 + KEY_LEN);
-    Serial.printf("[SAT] Claves: uso las rotadas en vuelo (ID %u), guardadas en la flash\n", activeKeyId);
+    Serial.printf("[SAT] Keys: using the ones rotated in flight (ID %u), saved in flash\n", activeKeyId);
   } else {
-    // Primera vez, o has cambiado la KEK en secrets.h: claves iniciales
+    // First time, or you changed the KEK in secrets.h: initial keys
     activeKeyId = 1;
     saInit(tcSa, SPI_TC, INITIAL_TC_KEY);
     saInit(tmSa, SPI_TM, INITIAL_TM_KEY);
     nvs.remove("keys");
-    Serial.println("[SAT] Claves: uso las iniciales de secrets.h (ID 1)");
+    Serial.println("[SAT] Keys: using the initial ones from secrets.h (ID 1)");
   }
   memset(rec, 0, sizeof(rec));
 }
 
-// ----------------------------- Telemetria -----------------------------
+// ----------------------------- Telemetry ------------------------------
 
 static void put16(uint8_t* p, uint16_t v) { p[0] = v >> 8; p[1] = v & 0xFF; }
 static void put32(uint8_t* p, uint32_t v) { p[0] = v >> 24; p[1] = v >> 16; p[2] = v >> 8; p[3] = v; }
@@ -236,7 +236,7 @@ void sendAckFail(uint16_t pktSeq, uint8_t code) {
   sendTm(SVC_VERIF, SUB_ACK_FAIL, a, 3);
 }
 
-// Evento de seguridad con limite de frecuencia (cubo de fichas)
+// Security event with a rate limit (token bucket)
 void sendSecurityEvent(uint8_t code, uint8_t frameSeq, IPAddress ip, uint16_t port, const uint8_t* iv) {
   if (eventTokens == 0) {
     eventsSuppressed++;
@@ -258,18 +258,18 @@ void refillEventTokens(unsigned long now) {
   if (now - lastRefill < EVENT_REFILL_MS) return;
   lastRefill = now;
   if (eventTokens < EVENT_BURST) eventTokens++;
-  // Resumen de lo que no se pudo notificar uno a uno
+  // Summary of what could not be reported one by one
   if (suppressedPending > 0 && eventTokens > 0) {
     eventTokens--;
     uint8_t app[2];
     put16(app, suppressedPending);
     sendTm(SVC_EVENT, SUB_EVENTS_SUPPRESSED, app, 2);
-    Serial.printf("[SAT] Inundacion: %u eventos resumidos en uno\n", suppressedPending);
+    Serial.printf("[SAT] Flood: %u events summarized in one\n", suppressedPending);
     suppressedPending = 0;
   }
 }
 
-// ----------------------------- Telecomandos ---------------------------
+// ----------------------------- Telecommands ---------------------------
 
 void rejectLink() {
   tcRejected++;
@@ -286,7 +286,7 @@ void rejectSecurity(SecError err, const TcFrame& f, IPAddress ip, uint16_t port,
   markCounters();
 }
 
-// Gestion de claves: subir (OTAR) y activar
+// Key management: upload (OTAR) and activate
 bool handleKeys(uint8_t sub, const uint8_t* app, size_t appLen, uint16_t pktSeq) {
   if (sub == SUB_OTAR_UPLOAD) {
     if (appLen != 1 + OTAR_BLOCK_LEN) {
@@ -294,18 +294,18 @@ bool handleKeys(uint8_t sub, const uint8_t* app, size_t appLen, uint16_t pktSeq)
       return false;
     }
     uint8_t id = app[0];
-    if (id <= activeKeyId) {   // nunca volver a una clave anterior (rollback)
+    if (id <= activeKeyId) {   // never go back to an older key (rollback)
       sendAckFail(pktSeq, FAIL_OTAR_OLD_ID);
-      Serial.printf("[SAT] OTAR rechazado: el ID %u no es mayor que el activo (%u)\n", id, activeKeyId);
+      Serial.printf("[SAT] OTAR rejected: ID %u is not higher than the active one (%u)\n", id, activeKeyId);
       return false;
     }
     if (!otarUnwrap(kekCtx, id, app + 1, pendingTc, pendingTm)) {
       sendAckFail(pktSeq, FAIL_OTAR_INVALID);
-      Serial.println("[SAT] OTAR rechazado: el bloque no se descifra con la KEK");
+      Serial.println("[SAT] OTAR rejected: the block does not decrypt with the KEK");
       return false;
     }
     pendingKeyId = id;
-    Serial.printf("[SAT] OTAR: claves con ID %u recibidas y pendientes de activar\n", id);
+    Serial.printf("[SAT] OTAR: keys with ID %u received, waiting for activation\n", id);
     sendAck(pktSeq);
     return true;
   } else if (sub == SUB_OTAR_ACTIVATE) {
@@ -318,18 +318,18 @@ bool handleKeys(uint8_t sub, const uint8_t* app, size_t appLen, uint16_t pktSeq)
       return false;
     }
     if (!saSetKey(tcSa, pendingTc) || !saSetKey(tmSa, pendingTm)) {
-      Serial.println("[SAT] ERROR: no pude cargar las claves nuevas");
+      Serial.println("[SAT] ERROR: could not load the new keys");
       sendAckFail(pktSeq, FAIL_OTAR_INVALID);
       return false;
     }
     activeKeyId = pendingKeyId;
     saveActiveKeys(pendingTc, pendingTm);
-    memset(pendingTc, 0, KEY_LEN);   // destruir las copias en RAM
+    memset(pendingTc, 0, KEY_LEN);   // destroy the copies in RAM
     memset(pendingTm, 0, KEY_LEN);
     pendingKeyId = 0;
-    Serial.printf("[SAT] Claves ID %u ACTIVAS. Las anteriores quedan destruidas.\n", activeKeyId);
+    Serial.printf("[SAT] Keys ID %u ACTIVE. The old ones are destroyed.\n", activeKeyId);
     drawHeader();
-    sendAck(pktSeq);   // esta TM ya sale con la clave nueva
+    sendAck(pktSeq);   // this TM already goes out with the new key
     return true;
   }
   sendAckFail(pktSeq, FAIL_UNKNOWN_SERVICE);
@@ -374,15 +374,15 @@ void executePacket(const uint8_t* buf, size_t len) {
 }
 
 void handleTc(const uint8_t* buf, size_t len, IPAddress ip, uint16_t port) {
-  // 1) Trama TC (CRC, SCID, canal...)
+  // 1) TC frame (CRC, SCID, channel...)
   TcFrame f;
   if (parseTcFrame(buf, len, f) != TC_OK) {
     rejectLink();
     return;
   }
 
-  // 2) SDLS: SPI, MAC y anti-replay. Se aplica a TODOS los tipos (AD, BD, BC):
-  //    el bypass se salta el FARM, nunca la seguridad.
+  // 2) SDLS: SPI, MAC and anti-replay. It applies to ALL types (AD, BD, BC):
+  //    bypass skips the FARM, never the security.
   uint8_t iv[IV_LEN];
   size_t plainLen = 0;
   SecError sec = processTc(tcSa, buf, f, plain, sizeof(plain), plainLen, iv);
@@ -396,10 +396,10 @@ void handleTc(const uint8_t* buf, size_t len, IPAddress ip, uint16_t port) {
   groundPort = port;
   haveGround = true;
 
-  // 3) FARM-1 segun el tipo de trama
+  // 3) FARM-1 depending on the frame type
   if (f.bypass && f.controlCommand) {                      // BC
     farm::Result r = farm::onBc(farmState, plain, plainLen);
-    Serial.printf("[SAT] Comando de control (BC): %s. V(R) = %u\n", farm::resultName(r), farmState.vr);
+    Serial.printf("[SAT] Control command (BC): %s. V(R) = %u\n", farm::resultName(r), farmState.vr);
     if (r == farm::CONTROL_OK) sendAck(0xFFFF);
     else sendAckFail(0xFFFF, FAIL_FARM_CONTROL);
     markCounters();
@@ -409,36 +409,36 @@ void handleTc(const uint8_t* buf, size_t len, IPAddress ip, uint16_t port) {
     farm::Result r = farm::onAd(farmState, f.seq);
     if (r != farm::ACCEPT) {
       farmDiscards++;
-      Serial.printf("[SAT] FARM: trama N(S)=%u descartada (%s). V(R) = %u\n", f.seq, farm::resultName(r),
+      Serial.printf("[SAT] FARM: frame N(S)=%u dropped (%s). V(R) = %u\n", f.seq, farm::resultName(r),
                     farmState.vr);
       if (r == farm::DISCARD_AHEAD) sendAckFail(0xFFFF, FAIL_FARM_AHEAD);
       if (r == farm::LOCKOUT || r == farm::DISCARD_LOCKED) sendAckFail(0xFFFF, FAIL_FARM_LOCKOUT);
-      // Las repetidas se descartan en silencio: la CLCW ya le dice a la tierra que llegaron
+      // Duplicates are dropped silently: the CLCW already tells the ground they arrived
       flashBar(rgb565(255, 140, 0));
       markCounters();
       return;
     }
   } else {                                                 // BD
     farm::onBd(farmState);
-    Serial.println("[SAT] Trama BD (bypass): se salta el FARM, pero ha pasado SDLS");
+    Serial.println("[SAT] BD frame (bypass): skips the FARM, but it passed SDLS");
   }
 
-  // 4) Ejecutar el Space Packet
-  Serial.printf("[SAT] TC aceptado: trama #%u, IV #%llu\n", f.seq, (unsigned long long)ivToCounter(iv));
+  // 4) Execute the Space Packet
+  Serial.printf("[SAT] TC accepted: frame #%u, IV #%llu\n", f.seq, (unsigned long long)ivToCounter(iv));
   executePacket(plain, plainLen);
   flashBar(COLOR_BLANCO);
   markCounters();
 }
 
-// ------------------------------- Arranque -----------------------------
+// ------------------------------- Startup ------------------------------
 
 void setup() {
   Serial.begin(115200);
   delay(1500);
   Serial.println();
-  Serial.println("[SAT] Satelite simulado - fase 3 (SDLS + OTAR + FARM-1)");
+  Serial.println("[SAT] Simulated satellite - phase 3 (SDLS + OTAR + FARM-1)");
 
-  if (!Board_IO_Init()) Serial.println("[SAT] AVISO: no responde el expansor de IO");
+  if (!Board_IO_Init()) Serial.println("[SAT] WARNING: the IO expander does not answer");
   LCD_Init();
   Set_Backlight(80);
 
@@ -449,7 +449,7 @@ void setup() {
   if (nvs.getBytesLength("tciv") == IV_LEN) nvs.getBytes("tciv", tcSa.lastIv, IV_LEN);
   tmIv = nvs.getULong64("tmiv", 0);
   tmIvReserved = tmIv;
-  Serial.printf("[SAT] Anti-replay: ultimo IV de TC aceptado #%llu\n", (unsigned long long)ivToCounter(tcSa.lastIv));
+  Serial.printf("[SAT] Anti-replay: last accepted TC IV #%llu\n", (unsigned long long)ivToCounter(tcSa.lastIv));
 
   fillRect(0, 0, LCD_WIDTH, LCD_HEIGHT, COLOR_GRIS);
   drawHeader();
@@ -459,17 +459,17 @@ void setup() {
 
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
-  Serial.print("[SAT] Conectando a la Wi-Fi");
+  Serial.print("[SAT] Connecting to the Wi-Fi");
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
   }
   Serial.println();
-  Serial.print("[SAT] Conectado. MI IP ES: ");
+  Serial.print("[SAT] Connected. MY IP IS: ");
   Serial.println(WiFi.localIP());
 
   udp.begin(TC_PORT);
-  Serial.printf("[SAT] Escuchando tramas TC en UDP %u (SCID 0x%03X)\n", TC_PORT, SCID);
+  Serial.printf("[SAT] Listening for TC frames on UDP %u (SCID 0x%03X)\n", TC_PORT, SCID);
 
   payload[2] = 0;
   drawPayload();

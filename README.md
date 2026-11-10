@@ -1,82 +1,82 @@
 # CCSDS SDLS Ground Link
 
-Asegurando un enlace tierra-satélite de extremo a extremo con CCSDS y SDLS, usando un ESP32-C5 (placa Waveshare ESP32-C5-Touch-LCD-2.8) como satélite simulado.
+Securing a ground-to-satellite link end to end with CCSDS and SDLS, using an ESP32-C5 (Waveshare ESP32-C5-Touch-LCD-2.8 board) as the simulated satellite.
 
 [![CI](https://github.com/jfabio-navarrom/ccsds-sdls-groundlink/actions/workflows/ci.yml/badge.svg)](https://github.com/jfabio-navarrom/ccsds-sdls-groundlink/actions/workflows/ci.yml)
 
-> **Estado: fase 3 de 4.** El enlace habla CCSDS real (tramas TC y TM, Space Packets, servicios PUS-lite y housekeeping) y está protegido con **SDLS (CCSDS 355.0-B) usando AES-256-GCM**: anti-replay persistente, eventos de seguridad, **rotación de claves en vuelo (OTAR)**, **COP-1 (FOP/FARM-1)** con retransmisión y defensa ante inundación. Las fases anteriores se conservan para comparar.
+> **Status: all 4 phases done.** The link speaks real CCSDS (TC and TM frames, Space Packets, PUS-lite services and housekeeping) and is protected with **SDLS (CCSDS 355.0-B) using AES-256-GCM**. It has persistent anti-replay, security events, **in-flight key rotation (OTAR)**, **COP-1 (FOP/FARM-1)** with retransmission, and flood defense. Phase 4 adds the threat model, NIST traceability and policy as code. The older phases are kept for comparison.
 
-## El "antes": sin SDLS, cualquiera manda
+## The "before": without SDLS, anyone can command
 
-![Demo fase 0: la estación de tierra pone la carga útil en verde y un atacante sin claves la pone en rojo](docs/media/demo-f0-antes.gif)
+![Phase 0 demo: the ground station sets the payload to green and an attacker without keys sets it to red](docs/media/demo-f0-before.gif)
 
-La estación de tierra pone la carga útil (la pantalla) en verde. Después, un script atacante que no conoce ningún secreto inyecta un telecomando y el satélite lo acepta: la pantalla pasa a rojo. En la fase 2, este mismo ataque debe ser rechazado y quedar registrado en la telemetría.
+The ground station sets the payload (the screen) to green. Then an attacker script that knows no secret injects a telecommand, and the satellite accepts it: the screen turns red. In phase 2 this same attack must be rejected and logged in the telemetry.
 
-## Antes y después de SDLS
+## Before and after SDLS
 
-| Ataque | Fase 1 (sin SDLS) | Fase 2 (con SDLS) | Control |
+| Attack | Phase 1 (no SDLS) | Phase 2 (with SDLS) | Control |
 | --- | --- | --- | --- |
-| Inyección de TC | Aceptado | Rechazado y notificado | MAC AES-GCM |
-| Replay de una trama capturada | Aceptado | Rechazado, también tras reiniciar | IV como contador anti-replay, guardado en flash |
-| Bit cambiado con CRC recalculado | Aceptado | Rechazado | MAC (el CRC no es autenticación) |
-| Lectura de comandos y telemetría | Legible | Cifrado | AES-256-GCM |
-| Secuestro de telemetría | El HK va al atacante | La TM solo va a la tierra autenticada | Origen autenticado, no por IP |
-| IV gigante para bloquear a la tierra | No aplica | Sin efecto | Contador actualizado solo tras verificar la MAC |
+| TC injection | Accepted | Rejected and reported | AES-GCM MAC |
+| Replay of a captured frame | Accepted | Rejected, also after a reset | IV as anti-replay counter, saved in flash |
+| One bit changed, CRC computed again | Accepted | Rejected | MAC (the CRC is not authentication) |
+| Reading commands and telemetry | Readable | Encrypted | AES-256-GCM |
+| Telemetry hijack | HK goes to the attacker | TM only goes to the authenticated ground | Authenticated source, not IP |
+| Huge IV to lock out the ground | Not applicable | No effect | Counter only updated after the MAC check |
 
-Cada rechazo genera un **evento de seguridad** (servicio PUS 5,4) con el motivo, la IP de origen y el IV, que llega cifrado a la estación de tierra. Al emisor no se le responde nada.
+Each rejection creates a **security event** (PUS service 5,4) with the reason, the source IP and the IV. It arrives encrypted at the ground station. The sender gets no answer.
 
-## Fase 3: operar un enlace seguro
+## Phase 3: running a secure link
 
-| Escenario | Sin la fase 3 | Con la fase 3 | Control |
+| Scenario | Without phase 3 | With phase 3 | Control |
 | --- | --- | --- | --- |
-| Clave TC filtrada | El atacante manda hasta que se reflashea | `rotar` y la clave vieja deja de servir | OTAR con KEK, anti-rollback (ADR-010) |
-| Red que pierde el 40 % de los TC | Comandos perdidos sin aviso | Todos llegan, en orden | FOP con retransmisión (IV nuevo) + FARM-1 |
-| Trama bypass (BD/BC) sin SDLS | — | Rechazada y notificada | SDLS antes que el FARM (ADR-011) |
-| Inundación de 300 tramas falsas | 300 eventos que entierran la telemetría | 3 eventos + 1 resumen; la operación sigue | Límite de eventos (cubo de fichas) |
-| Reinicio del satélite | — | Lockout visible, se resuelve con `sync` | FARM-1 + CLCW |
+| Leaked TC key | The attacker is in control until a reflash | `rotate` and the old key stops working | OTAR with KEK, anti-rollback (ADR-010) |
+| Network that loses 40 % of the TCs | Commands lost without notice | All of them arrive, in order | FOP with retransmission (new IV) + FARM-1 |
+| Bypass frame (BD/BC) without SDLS | n/a | Rejected and reported | SDLS before the FARM (ADR-011) |
+| Flood of 300 fake frames | 300 events that bury the telemetry | 3 events + 1 summary; operations go on | Event limit (token bucket) |
+| Satellite reset | n/a | Visible lockout, fixed with `sync` | FARM-1 + CLCW |
 
-## Fase 4: arquitectura
+## Phase 4: architecture
 
-| Documento | Qué contiene |
+| Document | What is inside |
 | --- | --- |
-| [Threat model](docs/arquitectura/THREAT_MODEL.md) | 13 amenazas con técnica SPARTA, control, contramedida, evidencia en placa y riesgo residual |
-| [Trazabilidad NIST SP 800-53](docs/arquitectura/TRAZABILIDAD_NIST.md) | 16 controles: dónde están en el código y qué los demuestra (11 implementados, 3 parciales, 2 pendientes) |
-| [Base de datos de SA](docs/arquitectura/groundlink.sdls.yaml) | La configuración SDLS real como código, comprobada contra el firmware y escaneada con [ccsds-policy-as-code](https://github.com/jfabio-navarrom/ccsds-policy-as-code) |
-| [Riesgos aceptados](docs/arquitectura/riesgos-aceptados.yaml) | Desviaciones aceptadas con justificación, responsable y fecha de revisión; el CI falla si caducan |
-| [Portfolio summary (EN)](docs/PORTFOLIO_EN.md) | Resumen del proyecto en inglés |
+| [Threat model](docs/architecture/THREAT_MODEL.md) | 13 threats with SPARTA technique, control, countermeasure, evidence on the board and residual risk |
+| [NIST SP 800-53 traceability](docs/architecture/NIST_TRACEABILITY.md) | 16 controls: where they are in the code and what proves them (11 implemented, 3 partial, 2 missing) |
+| [SA database](docs/architecture/groundlink.sdls.yaml) | The real SDLS configuration as code, checked against the firmware and scanned with [ccsds-policy-as-code](https://github.com/jfabio-navarrom/ccsds-policy-as-code) |
+| [Accepted risks](docs/architecture/accepted-risks.yaml) | Accepted deviations with justification, owner and review date; CI fails when they expire |
+| [Portfolio summary](docs/PORTFOLIO.md) | One page summary of the project |
 
-## Qué hay en el repositorio
+## What is in the repo
 
-| Pieza | Archivo | Qué hace |
+| Part | File | What it does |
 | --- | --- | --- |
-| Satélite F3 | `satellite/satellite_f3/` | F2 + `farm.cpp` (FARM-1), OTAR con KEK, claves en NVS, límite de eventos |
-| Satélite F2 | `satellite/satellite_f2/` | Firmware con SDLS: `sdls.cpp` (mbedTLS), anti-replay en NVS, eventos de seguridad |
-| Satélite F1 | `satellite/satellite_f1/` | Línea base CCSDS sin seguridad |
-| Librería de tierra | `ground/ccsds/` | `frames.py` (TC/TM, Space Packets), `services.py` (PUS-lite), `sdls.py` (SDLS y OTAR), `cop1.py` (FARM-1), `keystore.py` (claves y contador de IV) |
-| Estación de tierra | `ground/gs_f3.py`, `gs_f2.py`, `gs_f1.py` | Consolas de cada fase; la F3 incluye FOP, `rotar`, `sync` y `--perdida` |
-| Atacante | `attacks/attack_f3.py`, `attack_f2.py`, `attack_f1.py` | `flood`, `bypass`, `filtrada`; `inject`, `forge`, `replay`, `tamper`, `espiar` |
-| Herramientas | `tools/` | Generador de claves y satélites simulados en Python |
-| Tests | `tests/` | Vectores, interoperabilidad C++ (mbedTLS) ↔ Python byte a byte y prueba de extremo a extremo de los ataques, en CI |
+| Satellite F3 | `satellite/satellite_f3/` | F2 + `farm.cpp` (FARM-1), OTAR with KEK, keys in NVS, event limit |
+| Satellite F2 | `satellite/satellite_f2/` | Firmware with SDLS: `sdls.cpp` (mbedTLS), anti-replay in NVS, security events |
+| Satellite F1 | `satellite/satellite_f1/` | CCSDS baseline with no security |
+| Ground library | `ground/ccsds/` | `frames.py` (TC/TM, Space Packets), `services.py` (PUS-lite), `sdls.py` (SDLS and OTAR), `cop1.py` (FARM-1), `keystore.py` (keys and IV counter) |
+| Ground station | `ground/gs_f3.py`, `gs_f2.py`, `gs_f1.py` | Console for each phase; F3 has FOP, `rotate`, `sync` and `--loss` |
+| Attacker | `attacks/attack_f3.py`, `attack_f2.py`, `attack_f1.py` | `flood`, `bypass`, `leaked`; `inject`, `forge`, `replay`, `tamper`, `sniff` |
+| Tools | `tools/` | Key generator, simulated satellites in Python, policy check |
+| Tests | `tests/` | Test vectors, C++ (mbedTLS) ↔ Python interop byte by byte, and end to end tests of the attacks, in CI |
 
-Guías paso a paso: [fase 0](GUIA_FASE0.md), [fase 1](GUIA_FASE1.md), [fase 2](GUIA_FASE2.md) y [fase 3](GUIA_FASE3.md).
+Step by step guides: [phase 0](GUIDE_PHASE0.md), [phase 1](GUIDE_PHASE1.md), [phase 2](GUIDE_PHASE2.md) and [phase 3](GUIDE_PHASE3.md).
 
-## Hoja de ruta
+## Roadmap
 
-1. **F0, preparación:** enlace UDP y control de la pantalla.
-2. **F1, MVP sin seguridad:** tramas TC/TM CCSDS, Space Packets y servicios PUS-lite.
-3. **F2, SDLS:** AES-256-GCM, anti-replay y eventos de seguridad en telemetría.
-4. **F3, claves y FARM:** rekeying en vuelo, FARM-1 y escenarios de bypass e inundación.
-5. **F4, arquitectura:** threat model SPARTA, traza NIST SP 800-53, ADRs y policy-as-code. ✓ Proyecto completo.
+1. **F0, setup:** UDP link and screen control.
+2. **F1, MVP with no security:** CCSDS TC/TM frames, Space Packets and PUS-lite services.
+3. **F2, SDLS:** AES-256-GCM, anti-replay and security events in telemetry.
+4. **F3, keys and FARM:** in-flight rekeying, FARM-1, and bypass and flood scenarios.
+5. **F4, architecture:** SPARTA threat model, NIST SP 800-53 traceability, ADRs and policy as code. ✓ Done.
 
-## Decisiones de arquitectura
+## Architecture decisions
 
-- [ADR-007: UDP sobre Wi-Fi como sustituto del enlace RF](docs/adr/ADR-007-udp-como-enlace-rf.md)
-- [ADR-008: SDLS con AES-256-GCM y una clave por sentido](docs/adr/ADR-008-sdls-aes-gcm.md)
-- [ADR-009: Anti-replay con el IV y contadores que sobreviven a reinicios](docs/adr/ADR-009-anti-replay-y-gestion-de-iv.md)
-- [ADR-010: Rotación de claves en vuelo (OTAR) con una clave maestra](docs/adr/ADR-010-rotacion-de-claves-otar.md)
-- [ADR-011: COP-1 por debajo de SDLS y límite de eventos ante inundación](docs/adr/ADR-011-cop1-e-inundacion.md)
-- [ADR-012: La configuración de seguridad como código, con riesgos aceptados versionados](docs/adr/ADR-012-politicas-como-codigo.md)
+- [ADR-007: UDP over Wi-Fi in place of the RF link](docs/adr/ADR-007-udp-as-rf-link.md)
+- [ADR-008: SDLS with AES-256-GCM and one key per direction](docs/adr/ADR-008-sdls-aes-gcm.md)
+- [ADR-009: Anti-replay with the IV, and counters that survive resets](docs/adr/ADR-009-anti-replay-and-iv-management.md)
+- [ADR-010: In-flight key rotation (OTAR) with a master key](docs/adr/ADR-010-otar-key-rotation.md)
+- [ADR-011: COP-1 below SDLS, and an event limit against flooding](docs/adr/ADR-011-cop1-and-flooding.md)
+- [ADR-012: Link security configuration as code, with versioned risk acceptances](docs/adr/ADR-012-policy-as-code.md)
 
-## Ética
+## Ethics
 
-Proyecto educativo y defensivo. Los scripts de ataque solo se usan contra el propio C5, en la red propia.
+Educational and defensive project. The attack scripts are only used against my own C5, on my own network.

@@ -1,11 +1,11 @@
 """
-Satelite simulado en Python - fase 1.
+Simulated satellite in Python - phase 1.
 
-Reproduce en el PC el comportamiento de satellite/satellite_f1/satellite_f1.ino.
-Sirve para probar la consola de tierra y los ataques sin la placa, y lo usan
-los tests automaticos.
+Does on the PC the same as satellite/satellite_f1/satellite_f1.ino.
+Useful to try the ground console and the attacks without the board. The
+automatic tests use it too.
 
-Uso:
+Usage:
     py tools\\fake_satellite_f1.py
     py ground\\gs_f1.py --sat 127.0.0.1
 """
@@ -22,8 +22,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 from ccsds import frames, services  # noqa: E402
 from ccsds.frames import CcsdsError  # noqa: E402
 
-ERR_CODES = {"trama demasiado corta": 1, "version incorrecta": 2, "longitud incorrecta": 3,
-             "CRC incorrecto": 4}
+ERR_CODES = {"frame too short": 1, "wrong version": 2, "wrong length": 3,
+             "bad CRC": 4}
 
 
 class FakeSatellite:
@@ -56,7 +56,7 @@ class FakeSatellite:
 
     def reject(self, addr, pkt_seq, code, why):
         self.rejected += 1
-        print(f"[SIM] TC rechazado: {why}")
+        print(f"[SIM] TC rejected: {why}")
         self.send_tm(addr, services.TM_ACK_FAIL, struct.pack(">HB", pkt_seq, code))
 
     def handle(self, data, addr):
@@ -65,30 +65,30 @@ class FakeSatellite:
         except CcsdsError as e:
             return self.reject(addr, 0xFFFF, ERR_CODES.get(str(e), 3), str(e))
         if f.scid != frames.SCID:
-            return self.reject(addr, 0xFFFF, 5, "SCID de otro satelite")
+            return self.reject(addr, 0xFFFF, 5, "SCID of another spacecraft")
         if f.vcid != frames.VCID:
-            return self.reject(addr, 0xFFFF, 6, "canal virtual desconocido")
+            return self.reject(addr, 0xFFFF, 6, "unknown virtual channel")
         try:
             p = frames.parse_space_packet(f.data)
             if len(f.data) != 6 + len(p.data) or p.type != 1 or p.apid != frames.APID_SAT or len(p.data) < 2:
-                raise CcsdsError("paquete mal formado")
+                raise CcsdsError("bad packet")
         except CcsdsError:
-            return self.reject(addr, 0xFFFF, 10, "paquete mal formado")
+            return self.reject(addr, 0xFFFF, 10, "bad packet")
         service, app = (p.data[0], p.data[1]), p.data[2:]
         if service == services.TC_SET_COLOR and len(app) != 3:
-            return self.reject(addr, p.seq_count, 12, "color sin 3 bytes")
+            return self.reject(addr, p.seq_count, 12, "color without 3 bytes")
         if service not in (services.TC_PING, services.TC_SET_COLOR, services.TC_REQUEST_HK):
-            return self.reject(addr, p.seq_count, 11, "servicio desconocido")
+            return self.reject(addr, p.seq_count, 11, "unknown service")
 
         self.accepted += 1
         self.last_seq = f.seq
         self.ground = addr
-        print(f"[SIM] TC aceptado: trama #{f.seq}, servicio {service}, de {addr}")
+        print(f"[SIM] TC accepted: frame #{f.seq}, service {service}, from {addr}")
         if service == services.TC_PING:
             self.send_tm(addr, services.TM_PONG)
         elif service == services.TC_SET_COLOR:
             self.payload = tuple(app)
-            print(f"[SIM] Carga util: color = {self.payload}")
+            print(f"[SIM] Payload: color = {self.payload}")
             self.send_tm(addr, services.TM_ACK_OK, struct.pack(">H", p.seq_count))
         else:
             self.send_hk()
@@ -104,7 +104,7 @@ class FakeSatellite:
         self.handle(data, addr)
 
     def run(self):
-        print(f"[SIM] Satelite simulado escuchando en {self.sock.getsockname()}")
+        print(f"[SIM] Simulated satellite listening on {self.sock.getsockname()}")
         while True:
             self.step()
 

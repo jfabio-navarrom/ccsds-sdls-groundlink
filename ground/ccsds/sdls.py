@@ -1,17 +1,17 @@
 """
-Space Data Link Security (CCSDS 355.0-B), subconjunto - lado de tierra.
+Space Data Link Security (CCSDS 355.0-B), subset - ground side.
 
-Es la misma logica que satellite/satellite_f2/sdls.cpp, escrita de forma
-independiente en Python (con la libreria "cryptography").
+Same logic as satellite/satellite_f2/sdls.cpp, but written separately in
+Python (with the "cryptography" library).
 
-Trama TC protegida (longitud variable):
-    [cabecera TC 5][SPI 2][IV 12][Space Packet CIFRADO][MAC 16][FECF 2]
+Protected TC frame (variable length):
+    [cabecera TC 5][SPI 2][IV 12][ENCRYPTED Space Packet][MAC 16][FECF 2]
 
-Trama TM protegida (128 bytes fijos):
-    [cabecera TM 6][SPI 2][IV 12][datos CIFRADOS 86][MAC 16][CLCW 4][FECF 2]
+Protected TM frame (always 128 bytes):
+    [cabecera TM 6][SPI 2][IV 12][ENCRYPTED data 86][MAC 16][CLCW 4][FECF 2]
 
-AES-256-GCM. Datos autenticados (AAD) = cabecera de trama + SPI + IV.
-El IV hace tambien de numero de secuencia anti-replay.
+AES-256-GCM. Authenticated data (AAD) = frame header + SPI + IV.
+The IV is also the anti-replay sequence number.
 """
 
 from dataclasses import dataclass
@@ -20,7 +20,7 @@ try:
     from cryptography.exceptions import InvalidTag
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 except ImportError as exc:  # pragma: no cover
-    raise SystemExit("Falta la libreria 'cryptography'. Instalala con:  py -m pip install cryptography") from exc
+    raise SystemExit("The 'cryptography' library is missing. Install it with:  py -m pip install cryptography") from exc
 
 from . import frames
 from .frames import (APID_IDLE, FECF_LEN, SCID, SP_HEADER_LEN, TC_HEADER_LEN, TM_FRAME_LEN,
@@ -38,23 +38,23 @@ SPI_TM = 2
 
 TM_SDLS_DATA_LEN = TM_FRAME_LEN - TM_HEADER_LEN - SEC_OVERHEAD - TM_OCF_LEN - FECF_LEN  # 86
 
-# Codigos de rechazo / eventos de seguridad (iguales que en sdls.h)
+# Rejection codes / security events (same as in sdls.h)
 SEC_ERR_SPI = 20
 SEC_ERR_MAC = 21
 SEC_ERR_REPLAY = 22
 SEC_ERR_LENGTH = 23
 
 SEC_NAMES = {
-    SEC_ERR_SPI: "sin SDLS o SPI desconocido",
-    SEC_ERR_MAC: "MAC invalida",
-    SEC_ERR_REPLAY: "repeticion (replay)",
-    SEC_ERR_LENGTH: "demasiado corta para SDLS",
+    SEC_ERR_SPI: "no SDLS or unknown SPI",
+    SEC_ERR_MAC: "invalid MAC",
+    SEC_ERR_REPLAY: "replay",
+    SEC_ERR_LENGTH: "too short for SDLS",
 }
 
 
 class SdlsError(ValueError):
     def __init__(self, code: int):
-        super().__init__(SEC_NAMES.get(code, f"codigo {code}"))
+        super().__init__(SEC_NAMES.get(code, f"code {code}"))
         self.code = code
 
 
@@ -67,28 +67,28 @@ def iv_to_counter(iv: bytes) -> int:
 
 
 class SecurityAssociation:
-    """SPI + clave + ultimo IV aceptado (anti-replay)."""
+    """SPI + key + last accepted IV (anti-replay)."""
 
     def __init__(self, spi: int, key: bytes):
         if len(key) != KEY_LEN:
-            raise ValueError("la clave AES-256 debe tener 32 bytes")
+            raise ValueError("the AES-256 key must be 32 bytes")
         self.spi = spi
         self.aead = AESGCM(key)
         self.last_iv = bytes(IV_LEN)
 
     def set_key(self, key: bytes) -> None:
-        """Rotacion: cambia la clave y conserva el estado anti-replay."""
+        """Rotation: changes the key and keeps the anti-replay state."""
         if len(key) != KEY_LEN:
-            raise ValueError("la clave AES-256 debe tener 32 bytes")
+            raise ValueError("the AES-256 key must be 32 bytes")
         self.aead = AESGCM(key)
 
 
-# ------------------------------ Tramas TC -------------------------------
+# ------------------------------ TC frames -------------------------------
 
 def build_secure_tc_frame(sa: SecurityAssociation, packet: bytes, seq: int, iv_counter: int,
                           scid: int = SCID, vcid: int = VCID, bypass: bool = False,
                           control: bool = False) -> bytes:
-    """Lo usa la tierra: Space Packet (o comando de control) -> trama TC cifrada y autenticada."""
+    """Used by ground: Space Packet (or control command) -> encrypted and authenticated TC frame."""
     iv = iv_from_counter(iv_counter)
     sec_header = sa.spi.to_bytes(2, "big") + iv
     total = TC_HEADER_LEN + SEC_HEADER_LEN + len(packet) + MAC_LEN + FECF_LEN
@@ -100,7 +100,7 @@ def build_secure_tc_frame(sa: SecurityAssociation, packet: bytes, seq: int, iv_c
         length & 0xFF,
         seq & 0xFF,
     ])
-    sealed = sa.aead.encrypt(iv, packet, header + sec_header)  # = cifrado + MAC (16)
+    sealed = sa.aead.encrypt(iv, packet, header + sec_header)  # = ciphertext + MAC (16)
     body = header + sec_header + sealed
     crc = crc16(body)
     return body + bytes([crc >> 8, crc & 0xFF])
@@ -111,12 +111,12 @@ class SecureTc:
     frame: frames.TcFrame
     spi: int
     iv: bytes
-    packet: bytes          # Space Packet descifrado
+    packet: bytes          # decrypted Space Packet
 
 
 def process_secure_tc(sa: SecurityAssociation, buf: bytes) -> SecureTc:
-    """Lo que hace el satelite (lo usan el simulador y los tests)."""
-    f = frames.parse_tc_frame(buf)   # CcsdsError si la trama esta mal
+    """What the satellite does (used by the simulator and the tests)."""
+    f = frames.parse_tc_frame(buf)   # CcsdsError if the frame is bad
     if len(f.data) < SEC_OVERHEAD + 1:
         raise SdlsError(SEC_ERR_LENGTH)
     spi = int.from_bytes(f.data[:2], "big")
@@ -134,14 +134,14 @@ def process_secure_tc(sa: SecurityAssociation, buf: bytes) -> SecureTc:
     return SecureTc(frame=f, spi=spi, iv=iv, packet=packet)
 
 
-# ------------------------------ Tramas TM -------------------------------
+# ------------------------------ TM frames -------------------------------
 
 def build_secure_tm_frame(sa: SecurityAssociation, packet: bytes, mc_count: int, vc_count: int,
                           report_value: int, iv_counter: int) -> bytes:
-    """Lo que hace el satelite (lo usan el simulador y los tests)."""
+    """What the satellite does (used by the simulator and the tests)."""
     rest = TM_SDLS_DATA_LEN - len(packet)
     if rest < 0 or 0 < rest < SP_HEADER_LEN + 1:
-        raise CcsdsError("el paquete no cabe en la trama")
+        raise CcsdsError("packet does not fit in the frame")
     header = bytes([(SCID >> 4) & 0x3F, ((SCID & 0x0F) << 4) | ((VCID & 0x07) << 1) | 1,
                     mc_count & 0xFF, vc_count & 0xFF, 0x18, 0x00])
     iv = iv_from_counter(iv_counter)
@@ -163,13 +163,13 @@ class SecureTm:
 
 
 def parse_secure_tm_frame(sa: SecurityAssociation, buf: bytes, check_replay: bool = True) -> SecureTm:
-    """Lo usa la tierra: verifica, descifra y extrae los paquetes de una trama TM."""
+    """Used by ground: checks, decrypts and takes the packets out of a TM frame."""
     if len(buf) != TM_FRAME_LEN:
-        raise CcsdsError(f"una trama TM debe medir {TM_FRAME_LEN} bytes")
+        raise CcsdsError(f"a TM frame must be {TM_FRAME_LEN} bytes")
     if crc16(buf[:-2]) != (buf[-2] << 8) | buf[-1]:
-        raise CcsdsError("CRC incorrecto")
+        raise CcsdsError("bad CRC")
     if buf[0] >> 6 != 0:
-        raise CcsdsError("version incorrecta")
+        raise CcsdsError("wrong version")
     sh = buf[TM_HEADER_LEN:TM_HEADER_LEN + SEC_HEADER_LEN]
     if int.from_bytes(sh[:2], "big") != sa.spi:
         raise SdlsError(SEC_ERR_SPI)
@@ -192,7 +192,7 @@ def parse_secure_tm_frame(sa: SecurityAssociation, buf: bytes, check_replay: boo
     return SecureTm(frame=tm, iv=iv)
 
 
-# ------------------------- Gestion de claves (OTAR) -------------------------
+# ---------------------------- Key management (OTAR) ----------------------------
 
 OTAR_BLOCK_LEN = IV_LEN + 2 * KEY_LEN + MAC_LEN   # 92
 
@@ -202,7 +202,7 @@ def _otar_aad(key_id: int) -> bytes:
 
 
 def otar_wrap(kek: bytes, key_id: int, tc_key: bytes, tm_key: bytes, iv: bytes = None) -> bytes:
-    """Envuelve las claves nuevas con la clave maestra: [IV 12][cifrado 64][MAC 16]."""
+    """Wraps the new keys with the master key: [IV 12][ciphertext 64][MAC 16]."""
     import os
     iv = iv or os.urandom(IV_LEN)
     return iv + AESGCM(kek).encrypt(iv, tc_key + tm_key, _otar_aad(key_id))
@@ -210,8 +210,8 @@ def otar_wrap(kek: bytes, key_id: int, tc_key: bytes, tm_key: bytes, iv: bytes =
 
 def otar_unwrap(kek: bytes, key_id: int, block: bytes) -> tuple:
     if len(block) != OTAR_BLOCK_LEN:
-        raise ValueError("bloque OTAR de longitud incorrecta")
-    keys = AESGCM(kek).decrypt(block[:IV_LEN], block[IV_LEN:], _otar_aad(key_id))  # InvalidTag si no
+        raise ValueError("OTAR block has wrong length")
+    keys = AESGCM(kek).decrypt(block[:IV_LEN], block[IV_LEN:], _otar_aad(key_id))  # InvalidTag if not
     return keys[:KEY_LEN], keys[KEY_LEN:]
 
 

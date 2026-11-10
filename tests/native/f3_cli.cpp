@@ -1,14 +1,14 @@
-// f3_cli.cpp - compila FARM-1 y OTAR del satelite (fase 3) en el PC para
-// los tests de interoperabilidad con Python (tests/test_f3.py).
+// f3_cli.cpp - builds the satellite FARM-1 and OTAR (phase 3) on the PC for
+// the interop tests with Python (tests/test_f3.py).
 //
 //   g++ -std=c++17 -Wall -Wextra -Isatellite/satellite_f3 satellite/satellite_f3/ccsds.cpp
 //       satellite/satellite_f3/sdls.cpp satellite/satellite_f3/farm.cpp tests/native/f3_cli.cpp
 //       -lmbedcrypto -o build/f3_cli
 //
-// Uso:
-//   f3_cli farm <op>...      op = ad:<N(S)> | bd | bc:<hex>; imprime "<resultado> <clcw hex>"
-//   f3_cli otar <kek_hex> <id> <bloque_hex>   -> "OK <tc_hex> <tm_hex>" o "ERR"
-//   f3_cli fp <kek_hex>                       -> huella de la KEK
+// Usage:
+//   f3_cli farm <op>...      op = ad:<N(S)> | bd | bc:<hex>; prints "<result> <clcw hex>"
+//   f3_cli otar <kek_hex> <id> <block_hex>    -> "OK <tc_hex> <tm_hex>" or "ERR"
+//   f3_cli fp <kek_hex>                       -> KEK fingerprint
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -77,6 +77,6 @@ int main(int argc, char** argv) {
     printf("\n");
     return 0;
   }
-  fprintf(stderr, "uso: f3_cli farm|otar|fp ...\n");
+  fprintf(stderr, "usage: f3_cli farm|otar|fp ...\n");
   return 2;
 }

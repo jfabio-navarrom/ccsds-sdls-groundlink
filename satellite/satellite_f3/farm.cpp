@@ -1,19 +1,19 @@
-// farm.cpp - FARM-1 simplificado (ver farm.h)
+// farm.cpp - simple FARM-1 (see farm.h)
 #include "farm.h"
 
 namespace farm {
 
 const char* resultName(Result r) {
   switch (r) {
-    case ACCEPT: return "aceptada";
-    case DISCARD_AHEAD: return "adelantada: falta una trama, retransmitir";
-    case DISCARD_DUPLICATE: return "repetida: ya se habia ejecutado";
-    case LOCKOUT: return "fuera de ventana: FARM bloqueado (lockout)";
-    case DISCARD_LOCKED: return "FARM bloqueado: hace falta Unlock";
-    case CONTROL_OK: return "comando de control ejecutado";
-    case CONTROL_BAD: return "comando de control no valido";
+    case ACCEPT: return "accepted";
+    case DISCARD_AHEAD: return "ahead: one frame is missing, retransmit";
+    case DISCARD_DUPLICATE: return "duplicate: it was already executed";
+    case LOCKOUT: return "out of window: FARM lockout";
+    case DISCARD_LOCKED: return "FARM in lockout: Unlock is needed";
+    case CONTROL_OK: return "control command executed";
+    case CONTROL_BAD: return "invalid control command";
   }
-  return "desconocido";
+  return "unknown";
 }
 
 Result onAd(State& s, uint8_t ns) {
@@ -48,7 +48,7 @@ Result onBc(State& s, const uint8_t* data, size_t len) {
     return CONTROL_OK;
   }
   if (len == 3 && data[0] == 0x82 && data[1] == 0x00) {  // Set V(R)
-    if (s.lockout) return CONTROL_BAD;  // segun el estandar, solo sin lockout
+    if (s.lockout) return CONTROL_BAD;  // by the standard, only without lockout
     s.vr = data[2];
     s.retransmit = false;
     s.farmB = (s.farmB + 1) & 0x03;
@@ -58,7 +58,7 @@ Result onBc(State& s, const uint8_t* data, size_t len) {
 }
 
 uint32_t clcw(const State& s, uint8_t vcid) {
-  return (1UL << 24) |                        // COP en uso = 01 (COP-1)
+  return (1UL << 24) |                        // COP in use = 01 (COP-1)
          (((uint32_t)vcid & 0x3F) << 18) |
          ((uint32_t)s.lockout << 13) |
          ((uint32_t)s.wait << 12) |

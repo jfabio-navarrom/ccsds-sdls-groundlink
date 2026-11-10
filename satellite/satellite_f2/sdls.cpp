@@ -1,4 +1,4 @@
-// sdls.cpp - implementacion del subconjunto SDLS (ver sdls.h)
+// sdls.cpp - implementation of the SDLS subset (see sdls.h)
 #include "sdls.h"
 #include <string.h>
 
@@ -9,12 +9,12 @@ using namespace ccsds;
 const char* secErrorName(SecError e) {
   switch (e) {
     case SEC_OK: return "OK";
-    case SEC_ERR_SPI: return "sin SDLS o SPI desconocido";
-    case SEC_ERR_MAC: return "MAC invalida";
-    case SEC_ERR_REPLAY: return "repeticion (replay)";
-    case SEC_ERR_LENGTH: return "demasiado corta para SDLS";
+    case SEC_ERR_SPI: return "no SDLS or unknown SPI";
+    case SEC_ERR_MAC: return "invalid MAC";
+    case SEC_ERR_REPLAY: return "replay";
+    case SEC_ERR_LENGTH: return "too short for SDLS";
   }
-  return "desconocido";
+  return "unknown";
 }
 
 bool saInit(SecurityAssociation& sa, uint16_t spi, const uint8_t key[KEY_LEN]) {
@@ -50,17 +50,17 @@ SecError processTc(SecurityAssociation& sa, const uint8_t* frame, const TcFrame&
   const uint8_t* mac = ct + ctLen;
   if (ctLen > cap) return SEC_ERR_LENGTH;
 
-  // 2) Autenticar y descifrar. AAD = cabecera de trama + Security Header
+  // 2) Authenticate and decrypt. AAD = frame header + Security Header
   size_t aadLen = TC_HEADER_LEN + SEC_HEADER_LEN;
   int rc = mbedtls_gcm_auth_decrypt(&sa.gcm, ctLen, iv, IV_LEN, frame, aadLen,
                                     mac, MAC_LEN, ct, plain);
   if (rc != 0) {
-    memset(plain, 0, ctLen);  // no dejar datos sin autenticar a la vista
+    memset(plain, 0, ctLen);  // do not leave unauthenticated data visible
     return SEC_ERR_MAC;
   }
 
-  // 3) Anti-replay: solo despues de comprobar la MAC, para que una trama
-  //    falsa con un IV enorme no pueda mover la ventana.
+  // 3) Anti-replay: only after checking the MAC, so that a fake frame
+  //    with a huge IV can not move the window.
   if (memcmp(iv, sa.lastIv, IV_LEN) <= 0) return SEC_ERR_REPLAY;
 
   memcpy(sa.lastIv, iv, IV_LEN);
@@ -75,7 +75,7 @@ size_t buildSecureTmFrame(SecurityAssociation& sa, uint8_t* out, uint8_t mcCount
   size_t rest = TM_SDLS_DATA_LEN - packetLen;
   if (rest != 0 && rest < SP_HEADER_LEN + 1) return 0;
 
-  // Cabecera primaria (igual que en la fase 1)
+  // Primary header (same as in phase 1)
   out[0] = (uint8_t)((SCID >> 4) & 0x3F);
   out[1] = (uint8_t)(((SCID & 0x0F) << 4) | ((VCID & 0x07) << 1) | 1);
   out[2] = mcCount;
@@ -89,7 +89,7 @@ size_t buildSecureTmFrame(SecurityAssociation& sa, uint8_t* out, uint8_t mcCount
   sh[1] = (uint8_t)(sa.spi & 0xFF);
   memcpy(sh + SPI_LEN, iv, IV_LEN);
 
-  // Campo de datos en claro: paquete + relleno
+  // Data field in clear: packet + idle
   uint8_t plain[TM_SDLS_DATA_LEN];
   memcpy(plain, packet, packetLen);
   if (rest != 0) {
@@ -97,7 +97,7 @@ size_t buildSecureTmFrame(SecurityAssociation& sa, uint8_t* out, uint8_t mcCount
     memset(plain + packetLen + SP_HEADER_LEN, 0x55, rest - SP_HEADER_LEN);
   }
 
-  // Cifrar + MAC. AAD = cabecera TM + Security Header
+  // Encrypt + MAC. AAD = TM header + Security Header
   uint8_t* ct = sh + SEC_HEADER_LEN;
   uint8_t* mac = ct + TM_SDLS_DATA_LEN;
   if (mbedtls_gcm_crypt_and_tag(&sa.gcm, MBEDTLS_GCM_ENCRYPT, TM_SDLS_DATA_LEN, iv, IV_LEN,
@@ -106,7 +106,7 @@ size_t buildSecureTmFrame(SecurityAssociation& sa, uint8_t* out, uint8_t mcCount
     return 0;
   }
 
-  // OCF (CLCW): fuera de la zona protegida, como en el estandar
+  // OCF (CLCW): outside the protected area, like in the standard
   uint8_t* o = mac + MAC_LEN;
   o[0] = (uint8_t)(clcw >> 24);
   o[1] = (uint8_t)(clcw >> 16);

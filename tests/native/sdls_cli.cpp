@@ -1,16 +1,16 @@
-// sdls_cli.cpp - compila la libreria SDLS del satelite en el PC para los
-// tests de interoperabilidad con Python (tests/test_interop_f2.py).
+// sdls_cli.cpp - builds the satellite SDLS library on the PC for the
+// interop tests with Python (tests/test_interop_f2.py).
 //
 //   g++ -std=c++17 -Wall -Wextra -Isatellite/satellite_f2
 //       satellite/satellite_f2/ccsds.cpp satellite/satellite_f2/sdls.cpp
 //       tests/native/sdls_cli.cpp -lmbedcrypto -o build/sdls_cli
 //
-// Uso:
-//   sdls_cli tc <clave_hex> <ultimo_iv> <trama_hex>...
-//        procesa las tramas en orden, como el satelite, e imprime una linea
-//        por trama: "OK <N(S)> <iv> <paquete_hex>", "TC <error>" o "SEC <codigo>"
-//   sdls_cli tm <clave_hex> <iv> <seq> <datos_hex> <mc> <vc> <vr>
-//        construye una trama TM protegida
+// Usage:
+//   sdls_cli tc <key_hex> <last_iv> <frame_hex>...
+//        processes the frames in order, like the satellite, and prints one line
+//        per frame: "OK <N(S)> <iv> <packet_hex>", "TC <error>" or "SEC <code>"
+//   sdls_cli tm <key_hex> <iv> <seq> <data_hex> <mc> <vc> <vr>
+//        builds a protected TM frame
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -81,6 +81,6 @@ int main(int argc, char** argv) {
     printf("\n");
     return 0;
   }
-  fprintf(stderr, "uso: sdls_cli tc|tm ...\n");
+  fprintf(stderr, "usage: sdls_cli tc|tm ...\n");
   return 2;
 }

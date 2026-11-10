@@ -1,17 +1,17 @@
 """
-Genera las claves de la fase 3:
-  - KEK (clave maestra): solo sirve para enviar claves nuevas en vuelo (OTAR)
-  - clave TC y clave TM iniciales (ID 1)
+Generates the phase 3 keys:
+  - KEK (master key): only used to send new keys in flight (OTAR)
+  - first TC key and TM key (ID 1)
 
-- Guarda las claves de tierra en ground/keys_f3.json (no se sube a GitHub).
-- Imprime las tres lineas que tienes que pegar en secrets.h del satelite.
+- Saves the ground keys in ground/keys_f3.json (not pushed to GitHub).
+- Prints the three lines you must paste into the satellite secrets.h.
 
-Despues de esto, para cambiar las claves de trafico NO hace falta volver a
-generar nada ni reflashear: usa el comando 'rotar' de la consola de tierra.
+After this, to change the traffic keys you do NOT need to generate anything
+or reflash: use the 'rotate' command of the ground console.
 
-Uso:
-    py tools\\gen_keys_f3.py            (no sobrescribe si ya existen)
-    py tools\\gen_keys_f3.py --nuevas   (empieza de cero: hay que reflashear)
+Usage:
+    py tools\\gen_keys_f3.py         (does not overwrite existing keys)
+    py tools\\gen_keys_f3.py --new   (start from zero: you must reflash)
 """
 
 import argparse
@@ -29,29 +29,29 @@ def c_array(key: bytes) -> str:
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description="Genera las claves de la fase 3")
-    ap.add_argument("--nuevas", action="store_true", help="sustituir las claves existentes")
+    ap = argparse.ArgumentParser(description="Generates the phase 3 keys")
+    ap.add_argument("--new", action="store_true", help="replace the existing keys")
     args = ap.parse_args(argv)
 
-    if os.path.exists(KEYS_F3_PATH) and not args.nuevas:
-        print("Ya tenias claves en ground/keys_f3.json; no las cambio (usa --nuevas para empezar de cero).")
+    if os.path.exists(KEYS_F3_PATH) and not args.new:
+        print("You already had keys in ground/keys_f3.json; I keep them (use --new to start from zero).")
     else:
         KeyStoreF3.create(KEYS_F3_PATH, secrets.token_bytes(32), secrets.token_bytes(32), secrets.token_bytes(32))
-        print("Claves nuevas guardadas en ground/keys_f3.json (este archivo NO se sube a GitHub).")
+        print("New keys saved in ground/keys_f3.json (this file is NOT pushed to GitHub).")
     ks = KeyStoreF3(KEYS_F3_PATH)
     if ks.active_id != 1:
-        print(f"OJO: la clave activa ya es la ID {ks.active_id} (rotada en vuelo). Las lineas de abajo son")
-        print("la KEK y las claves ACTUALES; si reflasheas, el satelite volvera a empezar con ellas.")
+        print(f"NOTE: the active key is already ID {ks.active_id} (rotated in flight). The lines below are")
+        print("the KEK and the CURRENT keys; if you reflash, the satellite starts again with them.")
     tc, tm = ks.active()
     print()
-    print("Copia estas tres lineas en la pestana secrets.h del satelite (satellite_f3),")
-    print("debajo de WIFI_PASS:")
+    print("Copy these three lines into the secrets.h tab of the satellite (satellite_f3),")
+    print("below WIFI_PASS:")
     print()
     print(f"#define SDLS_KEK {c_array(ks.kek)}")
     print(f"#define SDLS_TC_KEY {c_array(tc)}")
     print(f"#define SDLS_TM_KEY {c_array(tm)}")
     print()
-    print("Trata estas claves como una contrasena: no las pegues en chats ni capturas.")
+    print("Treat these keys like a password: do not paste them in chats or screenshots.")
     return 0
 
 

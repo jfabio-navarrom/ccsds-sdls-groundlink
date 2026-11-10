@@ -1,44 +1,44 @@
-# ADR-008: SDLS con AES-256-GCM y una clave por sentido
+# ADR-008: SDLS with AES-256-GCM and one key per direction
 
-- **Estado:** aceptada
-- **Fecha:** 2026-11-07
+- **Status:** accepted
+- **Date:** 2026-11-07
 
-## Contexto
+## Context
 
-En la fase 1 el enlace habla CCSDS real, pero cualquiera de la red puede inyectar telecomandos, reproducir tramas capturadas, leer la telemetría y desviarla hacia sí mismo. El CRC solo detecta errores de transmisión. Hace falta autenticar el origen, proteger la integridad y la confidencialidad, y que el satélite deje constancia de los intentos.
+In phase 1 the link speaks real CCSDS, but anyone on the network can inject telecommands, replay captured frames, read the telemetry and redirect it to themselves. The CRC only finds transmission errors. I need to authenticate the sender, protect integrity and confidentiality, and the satellite must keep a record of the attempts.
 
-## Decisión
+## Decision
 
-Proteger las tramas TC y TM con un subconjunto de SDLS (CCSDS 355.0-B) en modo de cifrado autenticado:
+Protect TC and TM frames with a subset of SDLS (CCSDS 355.0-B) in authenticated encryption mode:
 
-| | Trama TC | Trama TM (128 bytes) |
+| | TC frame | TM frame (128 bytes) |
 | --- | --- | --- |
-| Security Header | SPI (2) + IV (12) tras la cabecera primaria | igual |
-| Datos | Space Packet cifrado | 86 bytes cifrados (paquete + relleno) |
-| Security Trailer | MAC de 16 bytes | MAC de 16 bytes, antes del OCF |
-| AAD (autenticado, en claro) | cabecera TC + SPI + IV | cabecera TM + SPI + IV |
+| Security Header | SPI (2) + IV (12) after the primary header | same |
+| Data | encrypted Space Packet | 86 encrypted bytes (packet + idle) |
+| Security Trailer | 16 byte MAC | 16 byte MAC, before the OCF |
+| AAD (authenticated, in clear) | TC header + SPI + IV | TM header + SPI + IV |
 
-- Algoritmo: **AES-256-GCM**, mbedTLS en el satélite y `cryptography` en tierra.
-- **Dos asociaciones de seguridad (SA):** SPI 1 con la clave TC (tierra → satélite) y SPI 2 con la clave TM (satélite → tierra).
-- El satélite **no responde nunca** a una trama que no supera SDLS. Envía un evento de seguridad (servicio 5,4) a la estación de tierra autenticada y lo cuenta en el housekeeping.
-- La telemetría solo se envía a la dirección del último TC **autenticado**.
+- Algorithm: **AES-256-GCM**, with mbedTLS on the satellite and `cryptography` on ground.
+- **Two security associations (SA):** SPI 1 with the TC key (ground → satellite) and SPI 2 with the TM key (satellite → ground).
+- The satellite **never answers** a frame that fails SDLS. It sends a security event (service 5,4) to the authenticated ground station and counts it in the housekeeping.
+- Telemetry only goes to the address of the last **authenticated** TC.
 
-## Por qué
+## Why
 
-- **GCM** da confidencialidad, integridad y autenticación en una sola operación, con una MAC de 128 bits. Es el modo que recomienda la SDLS Cryptographic Algorithms Blue Book (CCSDS 352.0-B) y el ESP32-C5 lo acelera por hardware.
-- **Cabecera en el AAD:** sin esto, un atacante podría cambiar el SCID, el canal o el N(S) sin romper la MAC.
-- **Una clave por sentido:** tierra y satélite generan sus IV con contadores independientes. Con una sola clave podrían coincidir en un IV, y repetir IV con la misma clave en GCM revela el XOR de los textos en claro y permite falsificar MACs. La separación de claves elimina ese riesgo por diseño.
-- **Silencio ante desconocidos:** no dar oráculo al atacante (no sabe si falló la MAC o el replay) y no amplificar tráfico hacia una IP falsificada.
+- **GCM** gives confidentiality, integrity and authentication in one operation, with a 128 bit MAC. It is the mode that the SDLS Cryptographic Algorithms Blue Book (CCSDS 352.0-B) recommends, and the ESP32-C5 has hardware support for it.
+- **Header in the AAD.** Without this, an attacker could change the SCID, the channel or the N(S) and the MAC would still be valid.
+- **One key per direction.** Ground and satellite make their IVs with separate counters. With one shared key they could hit the same IV, and in GCM a repeated IV with the same key leaks the XOR of the plaintexts and allows forged MACs. Separate keys remove this risk by design.
+- **Silence to unknown senders.** The attacker gets no oracle (they don't know if the MAC or the replay check failed), and the satellite does not send traffic to a faked IP.
 
-## Alternativas descartadas
+## Options I rejected
 
-- **Solo autenticación (GMAC/CMAC):** cierra la inyección y el replay, pero deja la telemetría y los comandos legibles. Se podrá mostrar como modo configurable más adelante.
-- **AES-CBC + HMAC:** dos primitivas y dos claves por sentido para obtener lo mismo que GCM, con más margen para errores de implementación.
-- **TLS/DTLS sobre UDP:** protege el transporte, no la trama CCSDS. No existe en un enlace RF real (ver ADR-007).
+- **Authentication only (GMAC/CMAC):** it stops injection and replay, but commands and telemetry stay readable. It could be a configurable mode later.
+- **AES-CBC + HMAC:** two primitives and two keys per direction to get what GCM already gives, with more room for implementation mistakes.
+- **TLS/DTLS over UDP:** it protects the transport, not the CCSDS frame. It does not exist on a real RF link (see ADR-007).
 
-## Consecuencias
+## Consequences
 
-- Cada TC crece 30 bytes y la TM útil baja de 116 a 86 bytes por trama.
-- El CLCW (OCF) queda **fuera** de la protección, como en el estándar: un atacante puede alterarlo. Se tratará con FARM-1 en la fase 3.
-- Las claves son precompartidas y están en `secrets.h` y `ground/keys_f2.json`, en claro. La flash del ESP32 no está cifrada (no hay flash encryption ni secure boot). Rotación de claves en vuelo: fase 3.
-- Los eventos de seguridad no tienen límite de frecuencia: una inundación de tramas falsas genera la misma cantidad de eventos. Se tratará en la fase 3 (escenario de inundación).
+- Each TC grows by 30 bytes, and the useful TM goes down from 116 to 86 bytes per frame.
+- The CLCW (OCF) stays **outside** the protection, like in the standard, so an attacker can change it. FARM-1 in phase 3 deals with it.
+- Keys are pre-shared and stored in clear in `secrets.h` and `ground/keys_f2.json`. The ESP32 flash is not encrypted (no flash encryption, no secure boot). In-flight key rotation comes in phase 3.
+- Security events have no rate limit: a flood of fake frames creates the same number of events. Phase 3 handles this (flood scenario).

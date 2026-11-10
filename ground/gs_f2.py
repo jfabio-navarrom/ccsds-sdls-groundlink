@@ -1,14 +1,14 @@
 """
-Consola de la estacion de tierra - fase 2 (CCSDS + SDLS, AES-256-GCM).
+Ground station console - phase 2 (CCSDS + SDLS, AES-256-GCM).
 
-Igual que gs_f1.py, pero cada TC sale cifrado y autenticado, y solo se
-acepta telemetria que demuestre venir del satelite (MAC valida con la
-clave TM). Ademas muestra los EVENTOS DE SEGURIDAD que envia el satelite
-cuando rechaza una trama.
+Same as gs_f1.py, but every TC goes out encrypted and authenticated, and
+it only accepts telemetry that proves it comes from the satellite (valid
+MAC with the TM key). It also shows the SECURITY EVENTS that the satellite
+sends when it rejects a frame.
 
-Antes de usarla, genera las claves:  py tools\\gen_keys_f2.py
+Before using it, generate the keys:  py tools\\gen_keys_f2.py
 
-Uso (en PowerShell, desde la carpeta del proyecto):
+Usage (in PowerShell, from the project folder):
     py ground\\gs_f2.py --sat 192.168.33.105
 """
 
@@ -29,20 +29,20 @@ from ccsds.sdls import SdlsError  # noqa: E402
 TC_PORT = 10025
 LOCAL_PORT = 10015
 
-COLORES = {
-    "verde": (0, 200, 0),
-    "azul": (0, 90, 255),
-    "amarillo": (255, 200, 0),
-    "blanco": (255, 255, 255),
-    "apagado": (0, 0, 0),
+COLORS = {
+    "green": (0, 200, 0),
+    "blue": (0, 90, 255),
+    "yellow": (255, 200, 0),
+    "white": (255, 255, 255),
+    "off": (0, 0, 0),
 }
 
-AYUDA = """Comandos:
-  ping              comprobar que el satelite responde
-  color <nombre>    verde | azul | amarillo | blanco | apagado
-  hk                pedir un informe de housekeeping ahora
-  estado            ver el ultimo housekeeping recibido
-  salir             cerrar la consola"""
+HELP = """Commands:
+  ping              check that the satellite answers
+  color <name>      green | blue | yellow | white | off
+  hk                ask for a housekeeping report now
+  status            show the last housekeeping received
+  quit              close the console"""
 
 
 class GroundStation:
@@ -65,7 +65,7 @@ class GroundStation:
         self.running = True
         self.lock = threading.Lock()
 
-    # ---------- envio ----------
+    # ---------- sending ----------
     def send(self, service: tuple, app_data: bytes = b"") -> bytes:
         with self.lock:
             pkt = services.build_tc_packet(service, self.packet_seq, app_data)
@@ -73,16 +73,16 @@ class GroundStation:
             self.packet_seq = (self.packet_seq + 1) & 0x3FFF
             self.frame_seq = (self.frame_seq + 1) & 0xFF
         self.sock.sendto(frame, self.sat)
-        print(f"[AIRE] TC cifrado enviado ({len(frame)} bytes): {frame.hex()}")
+        print(f"[AIR] encrypted TC sent ({len(frame)} bytes): {frame.hex()}")
         return frame
 
-    # ---------- recepcion ----------
+    # ---------- receiving ----------
     def handle_datagram(self, data: bytes, show_hk: bool = False):
         try:
             tm = sdls.parse_secure_tm_frame(self.tm_sa, data)
         except (CcsdsError, SdlsError) as e:
             self.discarded += 1
-            print(f"\n[TM] trama descartada ({e}): no viene del satelite o esta manipulada")
+            print(f"\n[TM] frame discarded ({e}): not from the satellite, or modified")
             return
         self.last_clcw = tm.frame.clcw
         for pkt in tm.frame.packets:
@@ -94,7 +94,7 @@ class GroundStation:
                     continue
             if service == services.TM_SEC_EVENT:
                 self.events.append(services.decode_sec_event(pkt.data[2:]))
-                print(f"\n[SEGURIDAD] {services.decode_tm_packet(pkt)}")
+                print(f"\n[SECURITY] {services.decode_tm_packet(pkt)}")
                 continue
             print(f"\n[TM #{tm.frame.mc_count}] {services.decode_tm_packet(pkt)}")
 
@@ -110,33 +110,33 @@ class GroundStation:
 
     def print_status(self):
         if self.last_hk is None:
-            print("Todavia no ha llegado ningun housekeeping. Prueba con 'hk'.")
+            print("No housekeeping received yet. Try 'hk'.")
             return
         hk = self.last_hk
         age = time.time() - self.last_hk_time
-        print(f"Ultimo HK autenticado (hace {age:.0f} s):")
-        print(f"  tiempo encendido     {hk.uptime_s} s")
-        print(f"  TC aceptados         {hk.tc_accepted}")
-        print(f"  tramas mal formadas  {hk.tc_rejected}")
-        print(f"  rechazos seguridad   sin SDLS/SPI {hk.sec_spi} | MAC invalida {hk.sec_mac}"
+        print(f"Last authenticated HK ({age:.0f} s ago):")
+        print(f"  uptime               {hk.uptime_s} s")
+        print(f"  TC accepted          {hk.tc_accepted}")
+        print(f"  bad frames           {hk.tc_rejected}")
+        print(f"  security rejections  no SDLS/SPI {hk.sec_spi} | invalid MAC {hk.sec_mac}"
               f" | replay {hk.sec_replay}")
-        print(f"  carga util (RGB)     {hk.payload_rgb}")
-        print(f"  RSSI Wi-Fi           {hk.rssi_dbm} dBm")
-        print(f"  memoria libre        {hk.free_heap} bytes")
+        print(f"  payload (RGB)        {hk.payload_rgb}")
+        print(f"  Wi-Fi RSSI           {hk.rssi_dbm} dBm")
+        print(f"  free heap            {hk.free_heap} bytes")
         if self.last_clcw is not None:
-            print(f"  CLCW: el satelite espera la trama #{self.last_clcw.report_value}")
+            print(f"  CLCW: the satellite expects frame #{self.last_clcw.report_value}")
         if self.events:
-            print(f"  eventos de seguridad recibidos en esta sesion: {len(self.events)}")
+            print(f"  security events received in this session: {len(self.events)}")
         if age > 12:
-            print("  AVISO: hace rato que no llega HK. Comprueba que el satelite sigue encendido.")
+            print("  WARNING: no HK for a while. Check that the satellite is still on.")
 
 
 def main(argv=None) -> int:
-    p = argparse.ArgumentParser(description="Estacion de tierra (fase 2, CCSDS + SDLS)")
-    p.add_argument("--sat", required=True, help="IP del C5 (la ves en el Monitor Serie)")
+    p = argparse.ArgumentParser(description="Ground station (phase 2, CCSDS + SDLS)")
+    p.add_argument("--sat", required=True, help="IP of the C5 (you see it in the Serial Monitor)")
     p.add_argument("--sat-port", type=int, default=TC_PORT, help=argparse.SUPPRESS)
     p.add_argument("--local-port", type=int, default=LOCAL_PORT, help=argparse.SUPPRESS)
-    p.add_argument("--ver-hk", action="store_true", help="mostrar cada HK periodico (cada 5 s)")
+    p.add_argument("--show-hk", action="store_true", help="show every periodic HK (every 5 s)")
     args = p.parse_args(argv)
 
     try:
@@ -147,46 +147,46 @@ def main(argv=None) -> int:
     try:
         gs = GroundStation(args.sat, tc_key, tm_key, args.sat_port, args.local_port)
     except OSError:
-        print(f"El puerto {args.local_port} ya esta en uso: seguramente tienes otra consola de tierra"
-              " abierta. Cierrala (escribe 'salir' o pulsa Ctrl+C) o usa otro puerto:"
+        print(f"Port {args.local_port} is already in use: probably another ground console is"
+              " open. Close it (type 'quit' or press Ctrl+C) or use another port:"
               f" --local-port {args.local_port + 1}")
         return 1
-    threading.Thread(target=gs.receive_loop, args=(args.ver_hk,), daemon=True).start()
+    threading.Thread(target=gs.receive_loop, args=(args.show_hk,), daemon=True).start()
 
-    print(f"Estacion de tierra lista. Satelite en {args.sat}:{args.sat_port}, SCID 0x{SCID:03X}.")
-    print("Fase 2: enlace protegido con SDLS (AES-256-GCM, anti-replay).")
-    print(AYUDA)
+    print(f"Ground station ready. Satellite at {args.sat}:{args.sat_port}, SCID 0x{SCID:03X}.")
+    print("Phase 2: link protected with SDLS (AES-256-GCM, anti-replay).")
+    print(HELP)
     gs.send(services.TC_PING)
 
     while True:
         try:
-            line = input("\ntierra> ").strip().lower()
+            line = input("\nground> ").strip().lower()
         except (EOFError, KeyboardInterrupt):
             break
         if not line:
             continue
         parts = line.split()
         cmd = parts[0]
-        if cmd == "salir":
+        if cmd == "quit":
             break
-        elif cmd == "ayuda":
-            print(AYUDA)
+        elif cmd == "help":
+            print(HELP)
         elif cmd == "ping":
             gs.send(services.TC_PING)
         elif cmd == "hk":
             gs.send(services.TC_REQUEST_HK)
             time.sleep(0.5)
             gs.print_status()
-        elif cmd == "estado":
+        elif cmd == "status":
             gs.print_status()
-        elif cmd == "color" and len(parts) == 2 and parts[1] in COLORES:
-            gs.send(services.TC_SET_COLOR, bytes(COLORES[parts[1]]))
+        elif cmd == "color" and len(parts) == 2 and parts[1] in COLORS:
+            gs.send(services.TC_SET_COLOR, bytes(COLORS[parts[1]]))
         else:
-            print("No entiendo ese comando. Escribe 'ayuda'.")
+            print("I don't know that command. Type 'help'.")
         time.sleep(0.3)
 
     gs.running = False
-    print("Estacion de tierra cerrada.")
+    print("Ground station closed.")
     return 0
 
 

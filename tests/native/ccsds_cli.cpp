@@ -1,13 +1,13 @@
-// ccsds_cli.cpp - compila la libreria CCSDS del satelite en el PC para
-// los tests de interoperabilidad con Python (tests/test_interop.py).
+// ccsds_cli.cpp - builds the satellite CCSDS library on the PC for
+// the interop tests with Python (tests/test_interop.py).
 //
 //   g++ -std=c++17 -Wall -Wextra -Isatellite/satellite_f1
 //       satellite/satellite_f1/ccsds.cpp tests/native/ccsds_cli.cpp -o build/ccsds_cli
 //
-// Uso:
+// Usage:
 //   ccsds_cli crc <hex>
-//   ccsds_cli tc <hex>                         -> analiza una trama TC
-//   ccsds_cli tm <seq> <datahex> <mc> <vc> <vr> -> construye una trama TM
+//   ccsds_cli tc <hex>                         -> parses a TC frame
+//   ccsds_cli tm <seq> <datahex> <mc> <vc> <vr> -> builds a TM frame
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -70,6 +70,6 @@ int main(int argc, char** argv) {
     printf("\n");
     return 0;
   }
-  fprintf(stderr, "uso: ccsds_cli crc|tc|tm ...\n");
+  fprintf(stderr, "usage: ccsds_cli crc|tc|tm ...\n");
   return 2;
 }

@@ -1,13 +1,13 @@
 """
-Claves SDLS y contador de IV de la estacion de tierra (fase 2).
+SDLS keys and IV counter of the ground station (phase 2).
 
-- Las claves viven en ground/keys_f2.json, que crea tools/gen_keys_f2.py
-  y que NUNCA se sube a GitHub (.gitignore).
-- El contador de IV de los TC tiene que crecer siempre, aunque cierres la
-  consola o borres el estado: si repitiera un IV, el satelite rechazaria
-  el TC como replay (y, peor, en GCM repetir IV con la misma clave filtra
-  informacion). Por eso usamos max(ultimo_guardado + 1, reloj en microsegundos):
-  aunque se pierda el archivo de estado, el reloj ya va por delante.
+- The keys live in ground/keys_f2.json. tools/gen_keys_f2.py creates this
+  file and it is NEVER pushed to GitHub (.gitignore).
+- The TC IV counter must always go up, also if you close the console or
+  delete the state file. If an IV is repeated, the satellite rejects the
+  TC as a replay (and worse, in GCM a repeated IV with the same key leaks
+  information). So we use max(last_saved + 1, clock in microseconds): if
+  the state file is lost, the clock is already ahead.
 """
 
 import json
@@ -24,19 +24,19 @@ class KeysMissing(Exception):
 
 
 def load_keys(path: str = KEYS_PATH) -> tuple:
-    """Devuelve (clave_tc, clave_tm) como bytes."""
+    """Returns (tc_key, tm_key) as bytes."""
     if not os.path.exists(path):
         raise KeysMissing(
-            "No encuentro las claves SDLS (ground/keys_f2.json). Generalas con:\n"
+            "I can not find the SDLS keys (ground/keys_f2.json). Generate them with:\n"
             "    py tools\\gen_keys_f2.py\n"
-            "y copia en secrets.h del satelite las dos lineas que imprime.")
+            "and copy the two lines it prints into the satellite secrets.h.")
     with open(path, encoding="utf-8") as fh:
         data = json.load(fh)
     return bytes.fromhex(data["tc_key"]), bytes.fromhex(data["tm_key"])
 
 
 class IvCounter:
-    """Contador monotono para el IV de los TC, guardado en disco."""
+    """Monotonic counter for the TC IV, saved on disk."""
 
     def __init__(self, path: str = STATE_PATH):
         self.path = path
@@ -58,7 +58,7 @@ class IvCounter:
         return self.last
 
 
-# ------------------------------- Fase 3 ---------------------------------
+# ------------------------------- Phase 3 --------------------------------
 
 KEYS_F3_PATH = os.path.join(GROUND_DIR, "keys_f3.json")
 STATE_F3_PATH = os.path.join(GROUND_DIR, "state_f3.json")
@@ -66,20 +66,20 @@ STATE_F3_PATH = os.path.join(GROUND_DIR, "state_f3.json")
 
 class KeyStoreF3:
     """
-    Claves de la fase 3, en ground/keys_f3.json (NUNCA se sube a GitHub):
-      kek       clave maestra: solo envuelve claves nuevas (OTAR)
-      active    {id, tc, tm}: claves de trafico en uso
-      pending   {id, tc, tm} o null: subidas pero todavia no activadas
-      retired   IDs ya retirados (las claves en si se borran)
+    Phase 3 keys, in ground/keys_f3.json (NEVER pushed to GitHub):
+      kek       master key: it only wraps new keys (OTAR)
+      active    {id, tc, tm}: traffic keys in use
+      pending   {id, tc, tm} or null: uploaded but not active yet
+      retired   IDs already retired (the keys themselves are deleted)
     """
 
     def __init__(self, path: str = KEYS_F3_PATH):
         self.path = path
         if not os.path.exists(path):
             raise KeysMissing(
-                "No encuentro las claves de la fase 3 (ground/keys_f3.json). Generalas con:\n"
+                "I can not find the phase 3 keys (ground/keys_f3.json). Generate them with:\n"
                 "    py tools\\gen_keys_f3.py\n"
-                "y copia en secrets.h del satelite las tres lineas que imprime.")
+                "and copy the three lines it prints into the satellite secrets.h.")
         with open(path, encoding="utf-8") as fh:
             self.data = json.load(fh)
 

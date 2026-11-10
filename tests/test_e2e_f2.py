@@ -1,6 +1,6 @@
 """
-Prueba de extremo a extremo de la fase 2 con el satelite simulado:
-la tierra opera con normalidad y los cuatro ataques fallan y se notifican.
+End to end test of phase 2 with the simulated satellite:
+ground works as normal, and the four attacks fail and are reported.
 """
 
 import io
@@ -67,7 +67,7 @@ class TestEndToEndF2(unittest.TestCase):
                 return
             time.sleep(0.05)
 
-    def test_operacion_y_ataques(self):
+    def test_operation_and_attacks(self):
         sat = ["--sat", "127.0.0.1", "--port", str(self.sat_port)]
         self.quiet(self.gs.send, services.TC_PING)
         green = self.quiet(self.gs.send, services.TC_SET_COLOR, bytes([0, 200, 0]))
@@ -80,15 +80,15 @@ class TestEndToEndF2(unittest.TestCase):
         self.quiet(attack_f2.main, sat + ["tamper", green.hex()])
         self.wait_events(4)
 
-        self.assertEqual(self.sat.payload, (0, 200, 0), "ningun ataque debe cambiar la carga util")
+        self.assertEqual(self.sat.payload, (0, 200, 0), "no attack should change the payload")
         self.assertEqual([e.code for e in self.gs.events],
                          [sdls.SEC_ERR_LENGTH, sdls.SEC_ERR_MAC, sdls.SEC_ERR_REPLAY, sdls.SEC_ERR_MAC])
 
-        # La tierra sigue mandando: el IV enorme del 'forge' no ha bloqueado la ventana
+        # Ground is still in control: the huge IV of 'forge' did not block the window
         self.quiet(self.gs.send, services.TC_SET_COLOR, bytes([0, 90, 255]))
         time.sleep(0.3)
         self.assertEqual(self.sat.payload, (0, 90, 255))
-        self.assertEqual(self.sat.ground[1], self.gs.sock.getsockname()[1], "la TM sigue yendo a la tierra")
+        self.assertEqual(self.sat.ground[1], self.gs.sock.getsockname()[1], "TM still goes to the ground station")
 
 
 if __name__ == "__main__":

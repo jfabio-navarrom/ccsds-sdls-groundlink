@@ -1,6 +1,6 @@
 """
-Prueba de extremo a extremo de la fase 3 con el satelite simulado:
-FOP con perdidas, rotacion de claves, clave filtrada, bypass e inundacion.
+End to end test of phase 3 with the simulated satellite:
+FOP with losses, key rotation, leaked key, bypass and flood.
 """
 
 import io
@@ -64,7 +64,7 @@ class TestEndToEndF3(unittest.TestCase):
             attack_f3.main(self.target + list(args))
         return out.getvalue()
 
-    def test_fop_con_perdidas(self):
+    def test_fop_with_losses(self):
         self.assertTrue(self.gs.sync())
         self.gs.loss, self.gs.rng = 0.4, random.Random(3)
         for color in ([0, 200, 0], [0, 90, 255], [255, 200, 0], [255, 255, 255], [9, 9, 9]):
@@ -73,33 +73,33 @@ class TestEndToEndF3(unittest.TestCase):
         self.assertGreater(self.gs.retransmissions, 0)
         self.assertEqual(self.sat.farm.vr, 5)
 
-    def test_lockout_y_sync(self):
+    def test_lockout_and_sync(self):
         self.gs.sync()
-        self.gs.vs = 100   # tierra desalineada (p. ej. tras reiniciar el satelite)
+        self.gs.vs = 100   # ground out of sync (for example after a satellite reset)
         self.assertIsNone(self.gs.send_ad(services.TC_PING))
         self.assertTrue(self.sat.farm.lockout)
         self.assertTrue(self.gs.sync())
         self.assertIsNotNone(self.gs.send_ad(services.TC_PING))
 
-    def test_rotacion_y_clave_filtrada(self):
+    def test_rotation_and_leaked_key(self):
         self.gs.sync()
-        self.assertIn("ACEPTADA", self.attack("filtrada", TC.hex()))
+        self.assertIn("ACCEPTED", self.attack("leaked", TC.hex()))
         self.assertEqual(self.sat.payload, (255, 0, 0))
-        self.assertIsNotNone(self.gs.send_ad(services.TC_PING))   # la tierra recupera el enlace
+        self.assertIsNotNone(self.gs.send_ad(services.TC_PING))   # ground gets the link back
         self.assertTrue(self.gs.rotate())
         self.assertEqual((self.sat.key_id, self.gs.ks.active_id), (2, 2))
-        self.assertIn("Rechazada", self.attack("filtrada", TC.hex()))
+        self.assertIn("Rejected", self.attack("leaked", TC.hex()))
         self.assertIsNotNone(self.gs.send_ad(services.TC_SET_COLOR, bytes([0, 200, 0])))
         self.assertEqual(self.sat.payload, (0, 200, 0))
 
-    def test_bypass_sin_sdls(self):
+    def test_bypass_without_sdls(self):
         self.gs.sync()
         self.attack("bypass")
         time.sleep(0.3)
         self.assertEqual([e.code for e in self.gs.events], [sdls.SEC_ERR_LENGTH, sdls.SEC_ERR_LENGTH])
         self.assertEqual(self.sat.payload, (0, 0, 0))
 
-    def test_inundacion(self):
+    def test_flood(self):
         self.gs.sync()
         self.attack("flood", "--n", "200")
         self.assertIsNotNone(self.gs.send_ad(services.TC_SET_COLOR, bytes([0, 90, 255])))

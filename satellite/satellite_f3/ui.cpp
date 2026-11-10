@@ -1,4 +1,4 @@
-// ui.cpp - ver ui.h
+// ui.cpp - see ui.h
 #include "ui.h"
 #include "Display_ST7789.h"
 
@@ -16,7 +16,7 @@ void fillRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color) {
   }
 }
 
-// Cada glifo: 5 filas de 3 bits (bit 2 = columna izquierda)
+// Each glyph: 5 rows of 3 bits (bit 2 = left column)
 static const uint8_t* glyph(char c) {
   static const uint8_t DIGITS[10][5] = {
     {7, 5, 5, 5, 7},  // 0
@@ -62,7 +62,7 @@ void drawText(uint16_t x, uint16_t y, const char* text, uint8_t scale,
               uint16_t color, uint16_t bg) {
   if (scale < 1) scale = 1;
   if (scale > 4) scale = 4;
-  const uint16_t cellW = 4 * scale;  // 3 columnas de glifo + 1 de separacion
+  const uint16_t cellW = 4 * scale;  // 3 glyph columns + 1 for spacing
   const uint16_t cellH = 5 * scale;
   static uint16_t cell[16 * 20];
 

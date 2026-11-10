@@ -1,12 +1,12 @@
 """
-Escanea la base de datos de SA del enlace con las politicas de
-ccsds-policy-as-code (Conftest/OPA) y la compara con el registro de riesgos
-aceptados.
+Scans the SA database of the link with the ccsds-policy-as-code policies
+(Conftest/OPA) and compares the result with the accepted risks register.
 
-    py tools\\check_policy.py --politicas ..\\ccsds-policy-as-code\\policy
+    py tools\\check_policy.py --policies ..\\ccsds-policy-as-code\\policy
 
-Falla (codigo 1) si hay hallazgos nuevos, aceptaciones que ya no aplican o
-aceptaciones con la revision vencida. Necesita 'conftest' en el PATH y PyYAML.
+Fails (exit code 1) if there are new findings, acceptances that do not apply
+anymore, or acceptances past their review date. Needs 'conftest' in the PATH
+and PyYAML.
 """
 
 import argparse
@@ -18,8 +18,8 @@ import subprocess
 import sys
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
-SA_DB = os.path.join(ROOT, "docs", "arquitectura", "groundlink.sdls.yaml")
-ACCEPTED = os.path.join(ROOT, "docs", "arquitectura", "riesgos-aceptados.yaml")
+SA_DB = os.path.join(ROOT, "docs", "architecture", "groundlink.sdls.yaml")
+ACCEPTED = os.path.join(ROOT, "docs", "architecture", "accepted-risks.yaml")
 
 
 def target_of(msg: str) -> str:
@@ -31,7 +31,7 @@ def target_of(msg: str) -> str:
 
 
 def parse_conftest(output: str) -> set:
-    """Devuelve {(nivel, policy_id, objetivo)} a partir de 'conftest -o json'."""
+    """Returns {(level, policy_id, target)} from 'conftest -o json'."""
     found = set()
     for result in json.loads(output):
         for level, key in (("fail", "failures"), ("warn", "warnings")):
@@ -41,49 +41,49 @@ def parse_conftest(output: str) -> set:
 
 
 def compare(found: set, accepted: list, today: dt.date) -> list:
-    """Lista de problemas (vacia = todo en orden)."""
+    """List of problems (empty = all good)."""
     problems = []
     covered = set()
     for a in accepted:
-        for tgt in a["objetivo"]:
+        for tgt in a["targets"]:
             covered.add((a["policy_id"], tgt))
             if not any(pid == a["policy_id"] and t == tgt for _, pid, t in found):
-                problems.append(f"ACEPTACION CADUCADA: {a['policy_id']} {tgt} ya no aparece; borrala del registro")
-        review = a["revisar_antes"]
+                problems.append(f"STALE ACCEPTANCE: {a['policy_id']} {tgt} is not found anymore; remove it from the register")
+        review = a["review_by"]
         review = review if isinstance(review, dt.date) else dt.date.fromisoformat(str(review))
         if review < today:
-            problems.append(f"REVISION VENCIDA: {a['policy_id']} debia revisarse antes de {review}")
+            problems.append(f"REVIEW OVERDUE: {a['policy_id']} had to be reviewed before {review}")
     for level, pid, tgt in sorted(found):
         if (pid, tgt) not in covered:
-            problems.append(f"HALLAZGO NUEVO ({level}): {pid} {tgt}")
+            problems.append(f"NEW FINDING ({level}): {pid} {tgt}")
     return problems
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--politicas", required=True, help="carpeta policy/ de ccsds-policy-as-code")
+    ap.add_argument("--policies", required=True, help="policy/ folder of ccsds-policy-as-code")
     ap.add_argument("--conftest", default="conftest")
     args = ap.parse_args(argv)
 
     import yaml
     with open(ACCEPTED, encoding="utf-8") as fh:
-        accepted = yaml.safe_load(fh)["aceptaciones"]
-    proc = subprocess.run([args.conftest, "test", SA_DB, "-p", args.politicas, "--all-namespaces", "-o", "json"],
+        accepted = yaml.safe_load(fh)["acceptances"]
+    proc = subprocess.run([args.conftest, "test", SA_DB, "-p", args.policies, "--all-namespaces", "-o", "json"],
                           capture_output=True, text=True)
     if proc.returncode not in (0, 1):
         print(proc.stderr)
         return 2
     found = parse_conftest(proc.stdout)
-    print(f"Hallazgos del escaneo: {len(found)}")
+    print(f"Scan findings: {len(found)}")
     for level, pid, tgt in sorted(found):
         print(f"  {level:4} {pid:12} {tgt}")
     problems = compare(found, accepted, dt.date.today())
     if problems:
-        print("\nPROBLEMAS:")
+        print("\nPROBLEMS:")
         for p in problems:
             print("  " + p)
         return 1
-    print("\nTodos los hallazgos estan aceptados, justificados y dentro de su fecha de revision.")
+    print("\nAll findings are accepted, justified and inside their review date.")
     return 0
 
 

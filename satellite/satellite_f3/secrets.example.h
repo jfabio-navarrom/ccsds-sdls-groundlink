@@ -1,14 +1,14 @@
-// Copia este archivo como "secrets.h" (en esta misma carpeta, como pestana
-// nueva del Arduino IDE). secrets.h esta en .gitignore: nunca se sube a GitHub.
+// Copy this file as "secrets.h" (in this same folder, as a new tab
+// in the Arduino IDE). secrets.h is in .gitignore: it is never pushed to GitHub.
 //
-// 1) Tu Wi-Fi:
-#define WIFI_SSID "nombre_de_tu_wifi"
-#define WIFI_PASS "contrasena_de_tu_wifi"
+// 1) Your Wi-Fi:
+#define WIFI_SSID "your_wifi_name"
+#define WIFI_PASS "your_wifi_password"
 
-// 2) Las claves. NO las inventes: ejecuta en el PC
+// 2) The keys. Do NOT make them up: run on the PC
 //        py tools\gen_keys_f3.py
-//    y sustituye estas tres lineas por las que imprime (32 bytes cada una).
-//    SDLS_KEK es la clave maestra: solo sirve para recibir claves nuevas (OTAR).
+//    and replace these three lines with the ones it prints (32 bytes each).
+//    SDLS_KEK is the master key: it is only used to receive new keys (OTAR).
 // #define SDLS_KEK {0x00, 0x00, ...}
 // #define SDLS_TC_KEY {0x00, 0x00, ...}
 // #define SDLS_TM_KEY {0x00, 0x00, ...}

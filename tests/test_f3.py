@@ -1,6 +1,6 @@
 """
-Tests de la fase 3: FARM-1, OTAR (rotacion de claves) e interoperabilidad
-con la implementacion C++ del satelite (build/f3_cli, si existe).
+Phase 3 tests: FARM-1, OTAR (key rotation) and interop with the C++
+satellite implementation (build/f3_cli, if it exists).
 """
 
 import os
@@ -22,12 +22,12 @@ KEK = bytes(range(100, 132))
 
 
 class TestFarm(unittest.TestCase):
-    def test_en_orden(self):
+    def test_in_order(self):
         f = cop1.Farm()
         self.assertEqual([f.on_ad(i) for i in range(3)], [cop1.ACCEPT] * 3)
         self.assertEqual(f.vr, 3)
 
-    def test_hueco_pide_retransmision(self):
+    def test_gap_asks_for_retransmit(self):
         f = cop1.Farm()
         f.on_ad(0)
         self.assertEqual(f.on_ad(2), cop1.DISCARD_AHEAD)
@@ -35,18 +35,18 @@ class TestFarm(unittest.TestCase):
         self.assertEqual(f.on_ad(1), cop1.ACCEPT)
         self.assertFalse(frames.parse_clcw(f.clcw()).retransmit)
 
-    def test_duplicado_y_lockout(self):
+    def test_duplicate_and_lockout(self):
         f = cop1.Farm()
         f.on_ad(0)
         self.assertEqual(f.on_ad(0), cop1.DISCARD_DUPLICATE)
         self.assertEqual(f.on_ad(100), cop1.LOCKOUT)
         self.assertEqual(f.on_ad(1), cop1.DISCARD_LOCKED)
-        self.assertEqual(f.on_bc(cop1.set_vr(5)), cop1.CONTROL_BAD)   # Set V(R) no vale con lockout
+        self.assertEqual(f.on_bc(cop1.set_vr(5)), cop1.CONTROL_BAD)   # Set V(R) is not allowed in lockout
         self.assertEqual(f.on_bc(cop1.UNLOCK), cop1.CONTROL_OK)
         self.assertEqual(f.on_bc(cop1.set_vr(5)), cop1.CONTROL_OK)
         self.assertEqual(f.on_ad(5), cop1.ACCEPT)
 
-    def test_vuelta_del_contador(self):
+    def test_counter_wraps(self):
         f = cop1.Farm(vr=255)
         self.assertEqual(f.on_ad(255), cop1.ACCEPT)
         self.assertEqual(f.vr, 0)
@@ -54,25 +54,25 @@ class TestFarm(unittest.TestCase):
 
 
 class TestOtar(unittest.TestCase):
-    def test_ida_y_vuelta(self):
+    def test_round_trip(self):
         tc, tm = os.urandom(32), os.urandom(32)
         block = sdls.otar_wrap(KEK, 2, tc, tm)
         self.assertEqual(len(block), sdls.OTAR_BLOCK_LEN)
         self.assertEqual(sdls.otar_unwrap(KEK, 2, block), (tc, tm))
 
-    def test_id_autenticado(self):
+    def test_id_is_authenticated(self):
         block = sdls.otar_wrap(KEK, 2, bytes(32), bytes(32))
         with self.assertRaises(InvalidTag):
-            sdls.otar_unwrap(KEK, 3, block)   # no se puede reetiquetar como otra ID
+            sdls.otar_unwrap(KEK, 3, block)   # it can not be relabeled as another ID
 
-    def test_rotar_conserva_anti_replay(self):
+    def test_rotation_keeps_anti_replay(self):
         sat = sdls.SecurityAssociation(sdls.SPI_TC, bytes(32))
         gnd = sdls.SecurityAssociation(sdls.SPI_TC, bytes(32))
         old = sdls.build_secure_tc_frame(gnd, b"\x10\x10\xc0\x00\x00\x01\x11\x01", 0, 100)
         sdls.process_secure_tc(sat, old)
         sat.set_key(KEK)
         gnd.set_key(KEK)
-        with self.assertRaises(sdls.SdlsError):     # la clave vieja ya no sirve
+        with self.assertRaises(sdls.SdlsError):     # the old key does not work anymore
             sdls.process_secure_tc(sat, old)
         new = sdls.build_secure_tc_frame(gnd, b"\x10\x10\xc0\x00\x00\x01\x11\x01", 1, 101)
         sdls.process_secure_tc(sat, new)
@@ -94,9 +94,9 @@ def cli(*args):
     return subprocess.run([CLI, *args], check=True, capture_output=True, text=True).stdout.strip().splitlines()
 
 
-@unittest.skipUnless(os.path.exists(CLI), "falta build/f3_cli")
+@unittest.skipUnless(os.path.exists(CLI), "missing build/f3_cli")
 class TestInteropF3(unittest.TestCase):
-    def test_farm_identico(self):
+    def test_same_farm(self):
         ops = ["ad:0", "ad:2", "ad:1", "ad:1", "ad:200", "bc:820005", "bc:00", "bc:820005", "ad:5", "bd", "bc:99"]
         f = cop1.Farm()
         expected = []
@@ -110,14 +110,14 @@ class TestInteropF3(unittest.TestCase):
             expected.append(f"{r} {f.clcw():08x}")
         self.assertEqual(cli("farm", *ops), expected)
 
-    def test_otar_de_python_lo_abre_el_satelite(self):
+    def test_satellite_opens_python_otar(self):
         tc, tm = os.urandom(32), os.urandom(32)
         block = sdls.otar_wrap(KEK, 7, tc, tm)
         self.assertEqual(cli("otar", KEK.hex(), "7", block.hex()), [f"OK {tc.hex()} {tm.hex()}"])
         self.assertEqual(cli("otar", KEK.hex(), "8", block.hex()), ["ERR"])
         self.assertEqual(cli("otar", bytes(32).hex(), "7", block.hex()), ["ERR"])
 
-    def test_huella_kek(self):
+    def test_kek_fingerprint(self):
         self.assertEqual(cli("fp", KEK.hex()), [sdls.kek_fingerprint(KEK).hex()])
 
 

@@ -1,14 +1,14 @@
 """
-Subconjunto de CCSDS para la estacion de tierra (fase 1).
+CCSDS subset for the ground station (phase 1).
 
-Es la misma pila que satellite/satellite_f1/ccsds.cpp, escrita de forma
-independiente en Python. Los tests de interoperabilidad comprueban que
-las dos implementaciones se entienden.
+This is the same stack as satellite/satellite_f1/ccsds.cpp, but written
+separately in Python. The interop tests check that both implementations
+understand each other.
 
 - TC Space Data Link Protocol (CCSDS 232.0-B)
 - TM Space Data Link Protocol (CCSDS 132.0-B)
 - Space Packet Protocol (CCSDS 133.0-B)
-- CRC-16 (FECF) y CLCW (COP-1)
+- CRC-16 (FECF) and CLCW (COP-1)
 """
 
 from dataclasses import dataclass
@@ -28,11 +28,11 @@ SP_HEADER_LEN = 6
 
 
 class CcsdsError(ValueError):
-    """Trama o paquete mal formado."""
+    """Bad frame or packet."""
 
 
 def crc16(data: bytes) -> int:
-    """CRC-16-CCITT (polinomio 0x1021, inicial 0xFFFF): el FECF de CCSDS."""
+    """CRC-16-CCITT (polynomial 0x1021, initial 0xFFFF): the CCSDS FECF."""
     crc = 0xFFFF
     for byte in data:
         crc ^= byte << 8
@@ -46,7 +46,7 @@ def crc16(data: bytes) -> int:
 
 @dataclass
 class SpacePacket:
-    type: int            # 1 = telecomando, 0 = telemetria
+    type: int            # 1 = telecommand, 0 = telemetry
     apid: int
     seq_count: int
     data: bytes
@@ -56,9 +56,9 @@ class SpacePacket:
 
 def build_space_packet(ptype: int, apid: int, seq_count: int, data: bytes) -> bytes:
     if not 1 <= len(data) <= 65536:
-        raise CcsdsError("el campo de datos debe tener entre 1 y 65536 bytes")
+        raise CcsdsError("data field must be 1 to 65536 bytes")
     if not 0 <= apid <= 0x7FF:
-        raise CcsdsError("APID fuera de rango")
+        raise CcsdsError("APID out of range")
     first = ((ptype & 1) << 4) | ((apid >> 8) & 0x07)
     seq = 0xC000 | (seq_count & 0x3FFF)
     length = len(data) - 1
@@ -67,12 +67,12 @@ def build_space_packet(ptype: int, apid: int, seq_count: int, data: bytes) -> by
 
 def parse_space_packet(buf: bytes) -> SpacePacket:
     if len(buf) < SP_HEADER_LEN + 1:
-        raise CcsdsError("paquete demasiado corto")
+        raise CcsdsError("packet too short")
     if buf[0] >> 5 != 0:
-        raise CcsdsError("version de paquete incorrecta")
+        raise CcsdsError("wrong packet version")
     data_len = ((buf[4] << 8) | buf[5]) + 1
     if SP_HEADER_LEN + data_len > len(buf):
-        raise CcsdsError("longitud de paquete incorrecta")
+        raise CcsdsError("wrong packet length")
     return SpacePacket(
         type=(buf[0] >> 4) & 1,
         secondary_header=bool((buf[0] >> 3) & 1),
@@ -83,14 +83,14 @@ def parse_space_packet(buf: bytes) -> SpacePacket:
     )
 
 
-# ------------------------------ Tramas TC -------------------------------
+# ------------------------------ TC frames -------------------------------
 
 def build_tc_frame(data: bytes, seq: int, scid: int = SCID, vcid: int = VCID,
                    bypass: bool = False, control: bool = False) -> bytes:
-    """Construye una trama TC con su CRC. data = un Space Packet."""
+    """Builds a TC frame with its CRC. data = one Space Packet."""
     total = TC_HEADER_LEN + len(data) + FECF_LEN
     if total > 1024:
-        raise CcsdsError("una trama TC no puede pasar de 1024 bytes")
+        raise CcsdsError("a TC frame can not be longer than 1024 bytes")
     length = total - 1
     header = bytes([
         (int(bypass) << 5) | (int(control) << 4) | ((scid >> 8) & 0x03),
@@ -115,15 +115,15 @@ class TcFrame:
 
 
 def parse_tc_frame(buf: bytes) -> TcFrame:
-    """Lo usan los tests (y un atacante que escucha el enlace)."""
+    """Used by the tests (and by an attacker listening to the link)."""
     if len(buf) < TC_HEADER_LEN + FECF_LEN + 1:
-        raise CcsdsError("trama demasiado corta")
+        raise CcsdsError("frame too short")
     if buf[0] >> 6 != 0:
-        raise CcsdsError("version incorrecta")
+        raise CcsdsError("wrong version")
     if (((buf[2] & 0x03) << 8) | buf[3]) + 1 != len(buf):
-        raise CcsdsError("longitud incorrecta")
+        raise CcsdsError("wrong length")
     if crc16(buf[:-2]) != (buf[-2] << 8) | buf[-1]:
-        raise CcsdsError("CRC incorrecto")
+        raise CcsdsError("bad CRC")
     return TcFrame(
         bypass=bool((buf[0] >> 5) & 1),
         control=bool((buf[0] >> 4) & 1),
@@ -134,7 +134,7 @@ def parse_tc_frame(buf: bytes) -> TcFrame:
     )
 
 
-# ------------------------------ Tramas TM -------------------------------
+# ------------------------------ TM frames -------------------------------
 
 @dataclass
 class Clcw:
@@ -142,8 +142,8 @@ class Clcw:
     lockout: bool
     wait: bool
     retransmit: bool
-    report_value: int   # V(R): siguiente numero de secuencia que espera el satelite
-    farm_b: int = 0     # contador de tramas BD/BC aceptadas (2 bits)
+    report_value: int   # V(R): next sequence number the satellite expects
+    farm_b: int = 0     # counter of accepted BD/BC frames (2 bits)
 
 
 def parse_clcw(word: int) -> Clcw:
@@ -163,12 +163,12 @@ class TmFrame:
     vcid: int
     mc_count: int
     vc_count: int
-    packets: list          # Space Packets utiles (sin los de relleno)
+    packets: list          # useful Space Packets (idle ones removed)
     clcw: Clcw
 
 
 def packets_from_data(data: bytes, fhp: int = 0) -> list:
-    """Extrae los Space Packets utiles (sin relleno) del campo de datos de una trama TM."""
+    """Takes the useful Space Packets (no idle) out of the data field of a TM frame."""
     packets = []
     pos = fhp
     while pos + SP_HEADER_LEN < len(data):
@@ -182,11 +182,11 @@ def packets_from_data(data: bytes, fhp: int = 0) -> list:
 
 def parse_tm_frame(buf: bytes) -> TmFrame:
     if len(buf) != TM_FRAME_LEN:
-        raise CcsdsError(f"una trama TM debe medir {TM_FRAME_LEN} bytes")
+        raise CcsdsError(f"a TM frame must be {TM_FRAME_LEN} bytes")
     if crc16(buf[:-2]) != (buf[-2] << 8) | buf[-1]:
-        raise CcsdsError("CRC incorrecto")
+        raise CcsdsError("bad CRC")
     if buf[0] >> 6 != 0:
-        raise CcsdsError("version incorrecta")
+        raise CcsdsError("wrong version")
     scid = ((buf[0] & 0x3F) << 4) | (buf[1] >> 4)
     vcid = (buf[1] >> 1) & 0x07
     ocf_present = buf[1] & 1
@@ -200,10 +200,10 @@ def parse_tm_frame(buf: bytes) -> TmFrame:
 
 
 def build_tm_frame(packet: bytes, mc_count: int, vc_count: int, report_value: int) -> bytes:
-    """Lo usan los tests para simular al satelite."""
+    """Used by the tests to simulate the satellite."""
     rest = TM_DATA_LEN - len(packet)
     if rest < 0 or 0 < rest < SP_HEADER_LEN + 1:
-        raise CcsdsError("el paquete no cabe en la trama")
+        raise CcsdsError("packet does not fit in the frame")
     out = bytearray()
     out += bytes([(SCID >> 4) & 0x3F, ((SCID & 0x0F) << 4) | ((VCID & 0x07) << 1) | 1,
                   mc_count & 0xFF, vc_count & 0xFF, 0x18, 0x00])

@@ -1,13 +1,13 @@
 """
-Genera las dos claves SDLS de la fase 2 (AES-256): una para los TC
-(tierra -> satelite, SPI 1) y otra para la TM (satelite -> tierra, SPI 2).
+Generates the two SDLS keys of phase 2 (AES-256): one for TC
+(ground -> satellite, SPI 1) and one for TM (satellite -> ground, SPI 2).
 
-- Guarda las claves de tierra en ground/keys_f2.json (no se sube a GitHub).
-- Imprime las dos lineas que tienes que pegar en secrets.h del satelite.
+- Saves the ground keys in ground/keys_f2.json (not pushed to GitHub).
+- Prints the two lines you must paste into the satellite secrets.h.
 
-Uso:
-    py tools\\gen_keys_f2.py            (no sobrescribe si ya existen)
-    py tools\\gen_keys_f2.py --nuevas   (genera otras y sustituye las anteriores)
+Usage:
+    py tools\\gen_keys_f2.py         (does not overwrite existing keys)
+    py tools\\gen_keys_f2.py --new   (makes new keys and replaces the old ones)
 """
 
 import argparse
@@ -26,28 +26,28 @@ def c_array(key: bytes) -> str:
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description="Genera las claves SDLS de la fase 2")
-    ap.add_argument("--nuevas", action="store_true", help="sustituir las claves existentes")
+    ap = argparse.ArgumentParser(description="Generates the phase 2 SDLS keys")
+    ap.add_argument("--new", action="store_true", help="replace the existing keys")
     args = ap.parse_args(argv)
 
-    if os.path.exists(KEYS_PATH) and not args.nuevas:
+    if os.path.exists(KEYS_PATH) and not args.new:
         with open(KEYS_PATH, encoding="utf-8") as fh:
             data = json.load(fh)
-        print("Ya tenias claves en ground/keys_f2.json; no las cambio (usa --nuevas para cambiarlas).")
+        print("You already had keys in ground/keys_f2.json; I keep them (use --new to change them).")
     else:
         data = {"tc_key": secrets.token_bytes(32).hex(), "tm_key": secrets.token_bytes(32).hex()}
         with open(KEYS_PATH, "w", encoding="utf-8") as fh:
             json.dump(data, fh, indent=2)
-        print("Claves nuevas guardadas en ground/keys_f2.json (este archivo NO se sube a GitHub).")
+        print("New keys saved in ground/keys_f2.json (this file is NOT pushed to GitHub).")
 
     print()
-    print("Copia estas dos lineas en la pestana secrets.h del satelite (satellite_f2),")
-    print("debajo de WIFI_PASS:")
+    print("Copy these two lines into the secrets.h tab of the satellite (satellite_f2),")
+    print("below WIFI_PASS:")
     print()
     print(f"#define SDLS_TC_KEY {c_array(bytes.fromhex(data['tc_key']))}")
     print(f"#define SDLS_TM_KEY {c_array(bytes.fromhex(data['tm_key']))}")
     print()
-    print("Trata estas claves como una contrasena: no las pegues en chats ni capturas.")
+    print("Treat these keys like a password: do not paste them in chats or screenshots.")
     return 0
 
 

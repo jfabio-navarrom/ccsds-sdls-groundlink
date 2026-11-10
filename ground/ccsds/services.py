@@ -1,9 +1,9 @@
 """
-Servicios "PUS-lite": el significado de los paquetes.
+"PUS-lite" services: what the packets mean.
 
-Inspirado en el Packet Utilization Standard de ECSS (ECSS-E-ST-70-41),
-pero reducido al minimo: el campo de datos de cada Space Packet empieza
-con 2 bytes (servicio, subservicio) seguidos de los datos de aplicacion.
+Based on the ECSS Packet Utilization Standard (ECSS-E-ST-70-41), but cut
+down to the minimum: the data field of each Space Packet starts with
+2 bytes (service, subservice) and then the application data.
 """
 
 import struct
@@ -11,49 +11,49 @@ from dataclasses import dataclass
 
 from .frames import APID_SAT, SpacePacket, build_space_packet
 
-# Telecomandos (tierra -> satelite)
-TC_PING = (17, 1)        # ¿estas vivo?
-TC_SET_COLOR = (8, 1)    # carga util: poner la pantalla de un color (R, G, B)
-TC_REQUEST_HK = (3, 27)  # pedir un informe de housekeeping ya
-TC_OTAR_UPLOAD = (24, 1)    # fase 3: subir claves nuevas envueltas con la KEK
-TC_OTAR_ACTIVATE = (24, 2)  # fase 3: activar las claves subidas
+# Telecommands (ground -> satellite)
+TC_PING = (17, 1)        # are you alive?
+TC_SET_COLOR = (8, 1)    # payload: set the screen to a color (R, G, B)
+TC_REQUEST_HK = (3, 27)  # ask for a housekeeping report now
+TC_OTAR_UPLOAD = (24, 1)    # phase 3: upload new keys wrapped with the KEK
+TC_OTAR_ACTIVATE = (24, 2)  # phase 3: activate the uploaded keys
 
-# Telemetria (satelite -> tierra)
+# Telemetry (satellite -> ground)
 TM_PONG = (17, 2)
-TM_ACK_OK = (1, 7)       # telecomando ejecutado
-TM_ACK_FAIL = (1, 2)     # telecomando rechazado (con codigo de motivo)
-TM_HK = (3, 25)          # informe de housekeeping
-TM_SEC_EVENT = (5, 4)    # evento de seguridad (fase 2): el satelite rechazo una trama
-TM_EVENTS_SUPPRESSED = (5, 5)  # fase 3: resumen de eventos no enviados (inundacion)
+TM_ACK_OK = (1, 7)       # telecommand executed
+TM_ACK_FAIL = (1, 2)     # telecommand rejected (with reason code)
+TM_HK = (3, 25)          # housekeeping report
+TM_SEC_EVENT = (5, 4)    # security event (phase 2): the satellite rejected a frame
+TM_EVENTS_SUPPRESSED = (5, 5)  # phase 3: summary of events not sent (flood)
 
 FAIL_CODES = {
-    1: "trama demasiado corta",
-    2: "version incorrecta",
-    3: "longitud incorrecta",
-    4: "CRC incorrecto",
-    5: "SCID de otro satelite",
-    6: "canal virtual desconocido",
-    10: "paquete mal formado",
-    11: "servicio desconocido",
-    12: "datos de aplicacion incorrectos",
-    20: "sin SDLS o SPI desconocido",
-    21: "MAC invalida",
-    22: "repeticion (replay)",
-    23: "demasiado corta para SDLS",
-    30: "FARM: trama adelantada, falta una anterior (retransmitir)",
-    31: "FARM bloqueado (lockout): hace falta 'sync'",
-    32: "comando de control del FARM no valido",
-    40: "OTAR: el bloque de claves no se descifra con la KEK",
-    41: "OTAR: el ID de clave no es mayor que el activo (rollback)",
-    42: "OTAR: no hay claves pendientes con ese ID",
+    1: "frame too short",
+    2: "wrong version",
+    3: "wrong length",
+    4: "bad CRC",
+    5: "SCID of another spacecraft",
+    6: "unknown virtual channel",
+    10: "bad packet",
+    11: "unknown service",
+    12: "bad application data",
+    20: "no SDLS or unknown SPI",
+    21: "invalid MAC",
+    22: "replay",
+    23: "too short for SDLS",
+    30: "FARM: frame is ahead, a previous one is missing (retransmit)",
+    31: "FARM in lockout: 'sync' is needed",
+    32: "invalid FARM control command",
+    40: "OTAR: key block does not decrypt with the KEK",
+    41: "OTAR: key ID is not higher than the active one (rollback)",
+    42: "OTAR: no pending keys with that ID",
 }
 
-HK_FORMAT = ">IHHB3BbI"   # uptime, TC aceptados, TC rechazados, ultima secuencia, R, G, B, RSSI, memoria libre
-# Fase 2: ademas, rechazos de seguridad por motivo (SPI, MAC, replay)
+HK_FORMAT = ">IHHB3BbI"   # uptime, TC accepted, TC rejected, last sequence, R, G, B, RSSI, free heap
+# Phase 2: also security rejections by reason (SPI, MAC, replay)
 HK_F2_FORMAT = ">IHHHHHB3BbI"
-# Evento de seguridad: codigo, N(S) de la trama, IP y puerto de origen, contador del IV
+# Security event: code, frame N(S), source IP and port, IV counter
 SEC_EVENT_FORMAT = ">BB4sHQ"
-# Fase 3: + descartes del FARM, eventos suprimidos e ID de la clave activa
+# Phase 3: + FARM discards, suppressed events and active key ID
 HK_F3_FORMAT = ">IHHHHHHH3BbIB"
 
 
@@ -74,51 +74,51 @@ class Housekeeping:
 
 
 def decode_tm_packet(pkt: SpacePacket) -> str:
-    """Traduce un paquete de telemetria a una frase legible."""
+    """Turns a telemetry packet into a readable line."""
     if len(pkt.data) < 2:
-        return f"paquete sin servicio (APID {pkt.apid:#x})"
+        return f"packet without service (APID {pkt.apid:#x})"
     service = (pkt.data[0], pkt.data[1])
     app = pkt.data[2:]
 
     if service == TM_PONG:
-        return "PONG: el satelite responde"
+        return "PONG: the satellite answers"
     if service == TM_ACK_OK and len(app) >= 2:
         seq = struct.unpack(">H", app[:2])[0]
         if seq == 0xFFFF:
-            return "OK: comando de control del FARM ejecutado"
-        return f"OK: telecomando (paquete #{seq}) ejecutado"
+            return "OK: FARM control command executed"
+        return f"OK: telecommand (packet #{seq}) executed"
     if service == TM_ACK_FAIL and len(app) >= 3:
         seq, code = struct.unpack(">HB", app[:3])
-        motivo = FAIL_CODES.get(code, f"codigo {code}")
-        quien = "trama" if seq == 0xFFFF else f"paquete #{seq}"
-        return f"RECHAZADO: {quien}, motivo: {motivo}"
+        reason = FAIL_CODES.get(code, f"code {code}")
+        what = "frame" if seq == 0xFFFF else f"packet #{seq}"
+        return f"REJECTED: {what}, reason: {reason}"
     if service == TM_SEC_EVENT and len(app) >= struct.calcsize(SEC_EVENT_FORMAT):
         ev = decode_sec_event(app)
-        return (f"EVENTO DE SEGURIDAD: trama rechazada ({ev.reason}) desde {ev.source}"
+        return (f"SECURITY EVENT: frame rejected ({ev.reason}) from {ev.source}"
                 f", N(S)={ev.frame_seq}, IV #{ev.iv_counter}")
     if service == TM_EVENTS_SUPPRESSED and len(app) >= 2:
         n = struct.unpack(">H", app[:2])[0]
-        return f"INUNDACION: {n} eventos de seguridad mas, resumidos en este aviso"
+        return f"FLOOD: {n} more security events, summarized in this message"
     if service == TM_HK and len(app) == struct.calcsize(HK_F3_FORMAT):
         hk = decode_hk_f3(app)
         r, g, b = hk.payload_rgb
-        return (f"HK: uptime {hk.uptime_s} s | TC aceptados {hk.tc_accepted} | rechazados {hk.tc_rejected}"
-                f" | FARM descartes {hk.farm_discards} | seguridad: SPI {hk.sec_spi}, MAC {hk.sec_mac},"
-                f" replay {hk.sec_replay} (suprimidos {hk.events_suppressed}) | clave ID {hk.key_id}"
-                f" | carga util ({r},{g},{b})")
+        return (f"HK: uptime {hk.uptime_s} s | TC accepted {hk.tc_accepted} | rejected {hk.tc_rejected}"
+                f" | FARM discards {hk.farm_discards} | security: SPI {hk.sec_spi}, MAC {hk.sec_mac},"
+                f" replay {hk.sec_replay} (suppressed {hk.events_suppressed}) | key ID {hk.key_id}"
+                f" | payload ({r},{g},{b})")
     if service == TM_HK and len(app) == struct.calcsize(HK_F2_FORMAT):
         hk = decode_hk_f2(app)
         r, g, b = hk.payload_rgb
-        return (f"HK: uptime {hk.uptime_s} s | TC aceptados {hk.tc_accepted} | "
-                f"rechazados {hk.tc_rejected} | seguridad: SPI {hk.sec_spi}, MAC {hk.sec_mac}, "
-                f"replay {hk.sec_replay} | carga util ({r},{g},{b}) | RSSI {hk.rssi_dbm} dBm")
+        return (f"HK: uptime {hk.uptime_s} s | TC accepted {hk.tc_accepted} | "
+                f"rejected {hk.tc_rejected} | security: SPI {hk.sec_spi}, MAC {hk.sec_mac}, "
+                f"replay {hk.sec_replay} | payload ({r},{g},{b}) | RSSI {hk.rssi_dbm} dBm")
     if service == TM_HK and len(app) >= struct.calcsize(HK_FORMAT):
         hk = decode_hk(app)
         r, g, b = hk.payload_rgb
-        return (f"HK: uptime {hk.uptime_s} s | TC aceptados {hk.tc_accepted} | "
-                f"rechazados {hk.tc_rejected} | ultima secuencia {hk.last_frame_seq} | "
-                f"carga util ({r},{g},{b}) | RSSI {hk.rssi_dbm} dBm | memoria libre {hk.free_heap} B")
-    return f"servicio desconocido {service}"
+        return (f"HK: uptime {hk.uptime_s} s | TC accepted {hk.tc_accepted} | "
+                f"rejected {hk.tc_rejected} | last sequence {hk.last_frame_seq} | "
+                f"payload ({r},{g},{b}) | RSSI {hk.rssi_dbm} dBm | free heap {hk.free_heap} B")
+    return f"unknown service {service}"
 
 
 def decode_hk(app: bytes) -> Housekeeping:
@@ -149,7 +149,7 @@ class SecurityEvent:
 
 def decode_sec_event(app: bytes) -> SecurityEvent:
     code, seq, ip, port, iv = struct.unpack(SEC_EVENT_FORMAT, app[:struct.calcsize(SEC_EVENT_FORMAT)])
-    return SecurityEvent(code, FAIL_CODES.get(code, f"codigo {code}"), seq,
+    return SecurityEvent(code, FAIL_CODES.get(code, f"code {code}"), seq,
                          f"{'.'.join(str(b) for b in ip)}:{port}", iv)
 
 

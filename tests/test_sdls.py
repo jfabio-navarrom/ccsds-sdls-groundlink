@@ -1,4 +1,4 @@
-"""Tests de SDLS (fase 2) en la pila de tierra. Ejecutar: py -m unittest discover -s tests"""
+"""SDLS tests (phase 2) of the ground stack. Run: py -m unittest discover -s tests"""
 
 import os
 import sys
@@ -21,8 +21,8 @@ def color_packet(seq=1, rgb=(0, 200, 0)):
 
 
 class TestAesGcm(unittest.TestCase):
-    def test_vector_nist_aes256_gcm(self):
-        # NIST GCM test case 13 (AES-256, clave, IV y texto en claro a cero)
+    def test_nist_vector_aes256_gcm(self):
+        # NIST GCM test case 13 (AES-256, key, IV and plaintext all zero)
         from cryptography.hazmat.primitives.ciphers.aead import AESGCM
         tag = AESGCM(bytes(32)).encrypt(bytes(12), b"", None)
         self.assertEqual(tag.hex(), "530f8afbc74536b9a963b4f1c4cb738b")
@@ -33,26 +33,26 @@ class TestSecureTc(unittest.TestCase):
         self.ground = sdls.SecurityAssociation(sdls.SPI_TC, KEY_TC)
         self.sat = sdls.SecurityAssociation(sdls.SPI_TC, KEY_TC)
 
-    def test_ida_y_vuelta(self):
+    def test_round_trip(self):
         frame = sdls.build_secure_tc_frame(self.ground, color_packet(), seq=4, iv_counter=1000)
         self.assertEqual(len(frame), 5 + 14 + 11 + 16 + 2)
         tc = sdls.process_secure_tc(self.sat, frame)
         self.assertEqual(tc.packet, color_packet())
         self.assertEqual((tc.frame.seq, sdls.iv_to_counter(tc.iv)), (4, 1000))
 
-    def test_el_paquete_va_cifrado(self):
+    def test_packet_is_encrypted(self):
         frame = sdls.build_secure_tc_frame(self.ground, color_packet(), seq=1, iv_counter=1)
         self.assertNotIn(color_packet(), frame)
         self.assertNotIn(bytes([8, 1, 0, 200, 0]), frame)
 
-    def test_replay_rechazado(self):
+    def test_replay_rejected(self):
         frame = sdls.build_secure_tc_frame(self.ground, color_packet(), seq=1, iv_counter=5)
         sdls.process_secure_tc(self.sat, frame)
         with self.assertRaises(SdlsError) as cm:
             sdls.process_secure_tc(self.sat, frame)
         self.assertEqual(cm.exception.code, sdls.SEC_ERR_REPLAY)
 
-    def test_iv_antiguo_rechazado(self):
+    def test_old_iv_rejected(self):
         new = sdls.build_secure_tc_frame(self.ground, color_packet(), seq=2, iv_counter=10)
         old = sdls.build_secure_tc_frame(self.ground, color_packet(), seq=1, iv_counter=9)
         sdls.process_secure_tc(self.sat, new)
@@ -60,17 +60,17 @@ class TestSecureTc(unittest.TestCase):
             sdls.process_secure_tc(self.sat, old)
         self.assertEqual(cm.exception.code, sdls.SEC_ERR_REPLAY)
 
-    def test_manipulacion_con_crc_recalculado(self):
+    def test_tampering_with_new_crc(self):
         frame = bytearray(sdls.build_secure_tc_frame(self.ground, color_packet(), seq=1, iv_counter=1))
-        frame[22] ^= 0x01                       # un bit del texto cifrado
-        crc = frames.crc16(bytes(frame[:-2]))   # el atacante arregla el CRC
+        frame[22] ^= 0x01                       # one bit of the ciphertext
+        crc = frames.crc16(bytes(frame[:-2]))   # the attacker fixes the CRC
         frame[-2:] = bytes([crc >> 8, crc & 0xFF])
         with self.assertRaises(SdlsError) as cm:
             sdls.process_secure_tc(self.sat, bytes(frame))
         self.assertEqual(cm.exception.code, sdls.SEC_ERR_MAC)
 
-    def test_cabecera_autenticada(self):
-        # Cambiar el N(S) de la cabecera (en claro) tambien rompe la MAC
+    def test_header_is_authenticated(self):
+        # Changing the N(S) in the header (in clear) also breaks the MAC
         frame = bytearray(sdls.build_secure_tc_frame(self.ground, color_packet(), seq=1, iv_counter=1))
         frame[4] = 99
         crc = frames.crc16(bytes(frame[:-2]))
@@ -79,30 +79,30 @@ class TestSecureTc(unittest.TestCase):
             sdls.process_secure_tc(self.sat, bytes(frame))
         self.assertEqual(cm.exception.code, sdls.SEC_ERR_MAC)
 
-    def test_clave_incorrecta(self):
+    def test_wrong_key(self):
         attacker = sdls.SecurityAssociation(sdls.SPI_TC, bytes(32))
         frame = sdls.build_secure_tc_frame(attacker, color_packet(), seq=1, iv_counter=10**15)
         with self.assertRaises(SdlsError) as cm:
             sdls.process_secure_tc(self.sat, frame)
         self.assertEqual(cm.exception.code, sdls.SEC_ERR_MAC)
-        # Y la trama falsa no ha movido la ventana anti-replay
+        # And the fake frame did not move the anti-replay window
         ok = sdls.build_secure_tc_frame(self.ground, color_packet(), seq=2, iv_counter=1)
         sdls.process_secure_tc(self.sat, ok)
 
-    def test_trama_de_la_fase_1_rechazada(self):
+    def test_phase_1_frame_rejected(self):
         frame = frames.build_tc_frame(color_packet(), seq=1)
         with self.assertRaises(SdlsError) as cm:
             sdls.process_secure_tc(self.sat, frame)
         self.assertEqual(cm.exception.code, sdls.SEC_ERR_LENGTH)
 
-    def test_spi_desconocido(self):
+    def test_unknown_spi(self):
         other = sdls.SecurityAssociation(7, KEY_TC)
         frame = sdls.build_secure_tc_frame(other, color_packet(), seq=1, iv_counter=1)
         with self.assertRaises(SdlsError) as cm:
             sdls.process_secure_tc(self.sat, frame)
         self.assertEqual(cm.exception.code, sdls.SEC_ERR_SPI)
 
-    def test_crc_roto_es_error_de_enlace(self):
+    def test_bad_crc_is_link_error(self):
         frame = bytearray(sdls.build_secure_tc_frame(self.ground, color_packet(), seq=1, iv_counter=1))
         frame[22] ^= 0x01
         with self.assertRaises(CcsdsError):
@@ -115,26 +115,26 @@ class TestSecureTm(unittest.TestCase):
         self.ground = sdls.SecurityAssociation(sdls.SPI_TM, KEY_TM)
         self.pkt = frames.build_space_packet(0, frames.APID_SAT, 3, bytes([17, 2]))
 
-    def test_ida_y_vuelta(self):
+    def test_round_trip(self):
         raw = sdls.build_secure_tm_frame(self.sat, self.pkt, 1, 2, 7, iv_counter=50)
         self.assertEqual(len(raw), 128)
         tm = sdls.parse_secure_tm_frame(self.ground, raw)
-        self.assertEqual(services.decode_tm_packet(tm.frame.packets[0]), "PONG: el satelite responde")
+        self.assertEqual(services.decode_tm_packet(tm.frame.packets[0]), "PONG: the satellite answers")
         self.assertEqual(tm.frame.clcw.report_value, 7)
 
-    def test_replay_de_tm_rechazado(self):
+    def test_tm_replay_rejected(self):
         raw = sdls.build_secure_tm_frame(self.sat, self.pkt, 1, 2, 7, iv_counter=50)
         sdls.parse_secure_tm_frame(self.ground, raw)
         with self.assertRaises(SdlsError):
             sdls.parse_secure_tm_frame(self.ground, raw)
 
-    def test_tm_falsa_rechazada(self):
+    def test_fake_tm_rejected(self):
         fake = sdls.SecurityAssociation(sdls.SPI_TM, bytes(32))
         raw = sdls.build_secure_tm_frame(fake, self.pkt, 1, 2, 7, iv_counter=50)
         with self.assertRaises(SdlsError):
             sdls.parse_secure_tm_frame(self.ground, raw)
 
-    def test_hk_y_evento_caben(self):
+    def test_hk_and_event_fit(self):
         import struct
         hk = struct.pack(services.HK_F2_FORMAT, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, -60, 1000)
         pkt = frames.build_space_packet(0, frames.APID_SAT, 1, bytes(services.TM_HK) + hk)
@@ -148,15 +148,15 @@ class TestSecureTm(unittest.TestCase):
 
 
 class TestIvCounter(unittest.TestCase):
-    def test_crece_siempre_aunque_se_pierda_el_estado(self):
+    def test_always_grows_even_if_state_is_lost(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "state.json")
             c = IvCounter(path)
             a, b = c.next(), c.next()
             self.assertLess(a, b)
-            self.assertLess(b, IvCounter(path).next())   # reabrir
+            self.assertLess(b, IvCounter(path).next())   # open again
             os.remove(path)
-            self.assertLess(b, IvCounter(path).next())   # estado perdido: el reloj va por delante
+            self.assertLess(b, IvCounter(path).next())   # state lost: the clock is ahead
 
 
 if __name__ == "__main__":

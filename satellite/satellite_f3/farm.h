@@ -1,22 +1,22 @@
 // =====================================================================
-//  farm.h - FARM-1 (COP-1, CCSDS 232.1-B), version simplificada
+//  farm.h - FARM-1 (COP-1, CCSDS 232.1-B), simple version
 //
-//  El FARM vive en el satelite y garantiza que los telecomandos de tipo AD
-//  se ejecutan en orden, sin huecos y sin duplicados. Para eso usa el
-//  numero de secuencia de trama N(S) y su propio contador V(R): el numero
-//  de la siguiente trama que espera.
+//  The FARM lives in the satellite and makes sure that AD telecommands
+//  run in order, with no gaps and no duplicates. For this it uses the
+//  frame sequence number N(S) and its own counter V(R): the number
+//  of the next frame it expects.
 //
-//  Tipos de trama (flags de la cabecera TC):
-//    AD (bypass 0, control 0): secuenciada, pasa por el FARM
-//    BD (bypass 1, control 0): "expedita", se salta el FARM (emergencias)
-//    BC (bypass 1, control 1): comando de control del propio FARM
+//  Frame types (flags in the TC header):
+//    AD (bypass 0, control 0): sequenced, goes through the FARM
+//    BD (bypass 1, control 0): "expedited", skips the FARM (emergencies)
+//    BC (bypass 1, control 1): control command for the FARM itself
 //                              (Unlock, Set V(R))
 //
-//  OJO: el FARM NO es un mecanismo de seguridad. N(S) tiene 8 bits, va en
-//  claro y da la vuelta cada 256 tramas. La seguridad la pone SDLS, que se
-//  aplica ANTES: una trama BD o BC sin MAC valida tampoco pasa.
+//  NOTE: the FARM is NOT a security mechanism. N(S) has 8 bits, travels in
+//  clear and wraps every 256 frames. Security comes from SDLS, which
+//  runs BEFORE it: a BD or BC frame without a valid MAC does not pass either.
 //
-//  No depende de Arduino: se compila en el PC para los tests.
+//  It does not depend on Arduino: it compiles on the PC for the tests.
 // =====================================================================
 #pragma once
 #include <stdint.h>
@@ -24,38 +24,38 @@
 
 namespace farm {
 
-const uint8_t WINDOW = 10;           // ventana del FARM (W)
-const uint8_t POS_WINDOW = WINDOW / 2;  // PW: tramas "adelantadas" que piden retransmision
-const uint8_t NEG_WINDOW = WINDOW / 2;  // NW: tramas repetidas que se descartan sin mas
+const uint8_t WINDOW = 10;           // FARM window (W)
+const uint8_t POS_WINDOW = WINDOW / 2;  // PW: frames "ahead" that ask for retransmit
+const uint8_t NEG_WINDOW = WINDOW / 2;  // NW: repeated frames that are just dropped
 
 struct State {
-  uint8_t vr = 0;           // V(R): siguiente N(S) esperado
-  bool lockout = false;     // bloqueado: hace falta un Unlock
-  bool wait = false;        // sin buffer (no lo usamos: siempre false)
-  bool retransmit = false;  // falta una trama: la tierra debe retransmitir
-  uint8_t farmB = 0;        // contador de tramas BD/BC aceptadas (2 bits)
+  uint8_t vr = 0;           // V(R): next expected N(S)
+  bool lockout = false;     // lockout: an Unlock is needed
+  bool wait = false;        // no buffer (not used: always false)
+  bool retransmit = false;  // a frame is missing: ground must retransmit
+  uint8_t farmB = 0;        // counter of accepted BD/BC frames (2 bits)
 };
 
 enum Result {
-  ACCEPT = 0,          // AD en orden, o BD: ejecutar
-  DISCARD_AHEAD,       // AD adelantada (hueco): descartar y pedir retransmision
-  DISCARD_DUPLICATE,   // AD ya recibida: descartar
-  LOCKOUT,             // AD fuera de toda ventana: el FARM se bloquea
-  DISCARD_LOCKED,      // el FARM ya estaba bloqueado
-  CONTROL_OK,          // BC ejecutado (Unlock o Set V(R))
-  CONTROL_BAD,         // BC desconocido o no permitido
+  ACCEPT = 0,          // AD in order, or BD: execute
+  DISCARD_AHEAD,       // AD ahead (gap): drop it and ask for retransmit
+  DISCARD_DUPLICATE,   // AD already received: drop it
+  LOCKOUT,             // AD outside every window: the FARM goes to lockout
+  DISCARD_LOCKED,      // the FARM was already in lockout
+  CONTROL_OK,          // BC executed (Unlock or Set V(R))
+  CONTROL_BAD,         // unknown or not allowed BC
 };
 
 const char* resultName(Result r);
 
-// Trama AD con numero de secuencia ns
+// AD frame with sequence number ns
 Result onAd(State& s, uint8_t ns);
-// Trama BD (bypass)
+// BD frame (bypass)
 Result onBd(State& s);
-// Trama BC. Comandos: Unlock = {0x00}; Set V(R) = {0x82, 0x00, N}
+// BC frame. Commands: Unlock = {0x00}; Set V(R) = {0x82, 0x00, N}
 Result onBc(State& s, const uint8_t* data, size_t len);
 
-// CLCW con el estado del FARM (va en el OCF de cada trama TM)
+// CLCW with the FARM state (goes in the OCF of each TM frame)
 uint32_t clcw(const State& s, uint8_t vcid);
 
 }  // namespace farm

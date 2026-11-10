@@ -1,0 +1,59 @@
+# Register of accepted risks for the findings of the policy scan
+# (ccsds-policy-as-code) on groundlink.sdls.yaml.
+#
+# tools/check_policy.py makes CI fail if:
+#   - a finding shows up that is NOT in this list (new deviation);
+#   - an acceptance does not match any finding anymore (stale acceptance:
+#     the problem was fixed and the entry must be removed);
+#   - an acceptance is past its review date.
+#
+# Each acceptance says WHAT is accepted, WHY, with WHICH compensating controls
+# and WHEN it is reviewed again. This is what an auditor would ask for.
+
+acceptances:
+  - policy_id: SDLS-020
+    targets: [spi=1, spi=2]
+    risk: medium
+    decision: >-
+      There is no separate sequence number field in the Security Header. The
+      12 octet IV (4 zero octets + 64 bit counter) works as the ARSN.
+    justification: >-
+      The IV is authenticated as AAD and the satellite requires it to grow
+      strictly. This check runs after the MAC check (ADR-009). The replay
+      attacks of phases 2 and 3 are rejected, also after a board reset.
+    compensating_controls: [ADR-009, tests/test_sdls.py, tests/test_interop_f2.py, tests/test_e2e_f2.py]
+    remediation: Add an explicit 4 octet ARSN if the link is used outside the lab.
+    owner: jfabio-navarrom
+    review_by: 2027-05-01
+
+  - policy_id: SDLS-021
+    targets: [spi=1, spi=2]
+    risk: low
+    decision: >-
+      No anti-replay window: any IV higher than the last one is accepted.
+    justification: >-
+      The ground IV counter is based on the clock in microseconds (so it
+      survives losing the state file). This gives big jumps that do not work
+      with a narrow window. An attacker without the key can not move the
+      counter, because the MAC is checked first ('forge' attack).
+    compensating_controls: [ADR-009, ADR-011, tests/test_e2e_f2.py]
+    remediation: If an explicit ARSN is added, use a sequential counter with window <= 16.
+    owner: jfabio-navarrom
+    review_by: 2027-05-01
+
+  - policy_id: MISSION-002
+    targets: [spi=1, spi=2]
+    risk: high
+    decision: >-
+      The keys are not in a KMS/HSM. On ground they live in a local JSON
+      file, and on board in the ESP32 flash without encryption.
+    justification: >-
+      Lab with a single board and no HSM. The key files are excluded from
+      Git, and in-flight rotation (OTAR) can revoke a leaked key without
+      reflashing.
+    compensating_controls: [ADR-010, .gitignore, tests/test_e2e_f3.py]
+    remediation: >-
+      Ground: keys in an OS key store (DPAPI / keyring) or an HSM.
+      On board: enable flash encryption and secure boot on the ESP32-C5.
+    owner: jfabio-navarrom
+    review_by: 2027-05-01

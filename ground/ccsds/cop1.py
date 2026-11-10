@@ -1,12 +1,12 @@
 """
-COP-1 (CCSDS 232.1-B), version simplificada.
+COP-1 (CCSDS 232.1-B), simple version.
 
-- FARM: el lado del satelite (aqui en Python para el simulador y los tests;
-  en la placa es satellite/satellite_f3/farm.cpp).
-- Comandos de control (tramas BC) que usa el FOP de la tierra.
+- FARM: the satellite side (here in Python for the simulator and the tests;
+  on the board it is satellite/satellite_f3/farm.cpp).
+- Control commands (BC frames) used by the ground FOP.
 
-El FARM no es un mecanismo de seguridad: ordena y deduplica. La seguridad
-la pone SDLS, que se aplica antes.
+The FARM is not a security mechanism: it only puts frames in order and
+removes duplicates. Security comes from SDLS, which runs before it.
 """
 
 from dataclasses import dataclass
@@ -18,16 +18,16 @@ NEG_WINDOW = WINDOW // 2
 ACCEPT, DISCARD_AHEAD, DISCARD_DUPLICATE, LOCKOUT, DISCARD_LOCKED, CONTROL_OK, CONTROL_BAD = range(7)
 
 RESULT_NAMES = {
-    ACCEPT: "aceptada",
-    DISCARD_AHEAD: "adelantada: falta una trama, retransmitir",
-    DISCARD_DUPLICATE: "repetida: ya se habia ejecutado",
-    LOCKOUT: "fuera de ventana: FARM bloqueado (lockout)",
-    DISCARD_LOCKED: "FARM bloqueado: hace falta Unlock",
-    CONTROL_OK: "comando de control ejecutado",
-    CONTROL_BAD: "comando de control no valido",
+    ACCEPT: "accepted",
+    DISCARD_AHEAD: "ahead: one frame is missing, retransmit",
+    DISCARD_DUPLICATE: "duplicate: it was already executed",
+    LOCKOUT: "out of window: FARM lockout",
+    DISCARD_LOCKED: "FARM in lockout: Unlock is needed",
+    CONTROL_OK: "control command executed",
+    CONTROL_BAD: "invalid control command",
 }
 
-# Comandos de control (contenido de una trama BC)
+# Control commands (content of a BC frame)
 UNLOCK = bytes([0x00])
 
 

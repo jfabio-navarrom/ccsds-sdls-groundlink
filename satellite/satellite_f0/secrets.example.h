@@ -1,6 +1,6 @@
-// Copia este archivo como "secrets.h" (en esta misma carpeta)
-// y pon el nombre y la contrasena de tu Wi-Fi.
-// secrets.h esta en .gitignore: nunca se sube a GitHub.
+// Copy this file as "secrets.h" (in this same folder)
+// and write the name and password of your Wi-Fi.
+// secrets.h is in .gitignore: it is never pushed to GitHub.
 
-#define WIFI_SSID "nombre_de_tu_wifi"
-#define WIFI_PASS "contrasena_de_tu_wifi"
+#define WIFI_SSID "your_wifi_name"
+#define WIFI_PASS "your_wifi_password"

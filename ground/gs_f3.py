@@ -1,19 +1,19 @@
 """
-Consola de la estacion de tierra - fase 3 (SDLS + OTAR + COP-1).
+Ground station console - phase 3 (SDLS + OTAR + COP-1).
 
-Novedades respecto a gs_f2.py:
-  - FOP (el lado de tierra de COP-1): cada telecomando lleva su N(S) y la
-    consola espera a que la CLCW del satelite confirme que llego. Si no
-    llega, lo retransmite (misma N(S), IV nuevo).
-  - 'rotar': cambia las claves de trafico en vuelo (OTAR), sin reflashear.
-  - 'sync': desbloquea el FARM y alinea los contadores (Unlock + Set V(R)).
-  - --perdida 0.3: simula un canal que pierde el 30 % de los telecomandos.
+New compared to gs_f2.py:
+  - FOP (the ground side of COP-1): every telecommand has its N(S) and the
+    console waits until the satellite CLCW confirms it arrived. If it does
+    not arrive, it is sent again (same N(S), new IV).
+  - 'rotate': changes the traffic keys in flight (OTAR), no reflash needed.
+  - 'sync': unlocks the FARM and aligns the counters (Unlock + Set V(R)).
+  - --loss 0.3: simulates a channel that loses 30 % of the telecommands.
 
-Antes de usarla, genera las claves:  py tools\\gen_keys_f3.py
+Before using it, generate the keys:  py tools\\gen_keys_f3.py
 
-Uso (en PowerShell, desde la carpeta del proyecto):
+Usage (in PowerShell, from the project folder):
     py ground\\gs_f3.py --sat 192.168.33.108
-    py ground\\gs_f3.py --sat 192.168.33.108 --perdida 0.3
+    py ground\\gs_f3.py --sat 192.168.33.108 --loss 0.3
 """
 
 import argparse
@@ -34,25 +34,25 @@ from ccsds.sdls import SdlsError  # noqa: E402
 
 TC_PORT = 10025
 LOCAL_PORT = 10015
-FOP_TIMEOUT = 1.5     # segundos esperando la confirmacion de cada trama
-FOP_TRIES = 4         # intentos por trama (1 + 3 retransmisiones)
+FOP_TIMEOUT = 1.5     # seconds waiting for the confirmation of each frame
+FOP_TRIES = 4         # tries per frame (1 + 3 retransmissions)
 
-COLORES = {
-    "verde": (0, 200, 0),
-    "azul": (0, 90, 255),
-    "amarillo": (255, 200, 0),
-    "blanco": (255, 255, 255),
-    "apagado": (0, 0, 0),
+COLORS = {
+    "green": (0, 200, 0),
+    "blue": (0, 90, 255),
+    "yellow": (255, 200, 0),
+    "white": (255, 255, 255),
+    "off": (0, 0, 0),
 }
 
-AYUDA = """Comandos:
-  ping              comprobar que el satelite responde
-  color <nombre>    verde | azul | amarillo | blanco | apagado
-  hk                pedir un informe de housekeeping ahora
-  estado            ver el ultimo housekeeping recibido
-  rotar             cambiar las claves de trafico en vuelo (OTAR)
-  sync              desbloquear el FARM y alinear los contadores
-  salir             cerrar la consola"""
+HELP = """Commands:
+  ping              check that the satellite answers
+  color <name>      green | blue | yellow | white | off
+  hk                ask for a housekeeping report now
+  status            show the last housekeeping received
+  rotate            change the traffic keys in flight (OTAR)
+  sync              unlock the FARM and align the counters
+  quit              close the console"""
 
 
 class GroundStation:
@@ -72,12 +72,12 @@ class GroundStation:
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind(("0.0.0.0", local_port))
         self.sock.settimeout(0.3)
-        self.vs = 0             # V(S): N(S) de la siguiente trama AD
+        self.vs = 0             # V(S): N(S) of the next AD frame
         self.packet_seq = 0
         self.cond = threading.Condition()
         self.tm_count = 0
         self.last_clcw = None
-        self.acks = {}          # paquete -> (ok, codigo)
+        self.acks = {}          # packet -> (ok, code)
         self.last_hk = None
         self.last_hk_time = None
         self.events = []
@@ -89,16 +89,16 @@ class GroundStation:
         if self.verbose:
             print(msg)
 
-    # ------------------------------ envio ------------------------------
+    # ------------------------------ sending ----------------------------
     def _send_frame(self, data: bytes, ns: int, bypass=False, control=False) -> bytes:
         frame = sdls.build_secure_tc_frame(self.tc_sa, data, seq=ns, iv_counter=self.iv.next(),
                                            bypass=bypass, control=control)
         if self.loss and self.rng.random() < self.loss:
-            self.log(f"[CANAL] trama N(S)={ns} perdida por el camino (simulado)")
+            self.log(f"[CHANNEL] frame N(S)={ns} lost on the way (simulated)")
             return frame
         self.sock.sendto(frame, self.sat)
         kind = "BC" if control else ("BD" if bypass else "AD")
-        self.log(f"[AIRE] TC {kind} N(S)={ns} cifrado ({len(frame)} bytes): {frame.hex()}")
+        self.log(f"[AIR] TC {kind} N(S)={ns} encrypted ({len(frame)} bytes): {frame.hex()}")
         return frame
 
     def _wait(self, predicate, timeout: float) -> bool:
@@ -106,8 +106,8 @@ class GroundStation:
             return self.cond.wait_for(predicate, timeout)
 
     def send_ad(self, service: tuple, app: bytes = b""):
-        """FOP: envia una trama AD y la retransmite hasta que la CLCW la confirma.
-        Devuelve el numero de paquete si se confirmo, o None."""
+        """FOP: sends an AD frame and retransmits it until the CLCW confirms it.
+        Returns the packet number if confirmed, or None."""
         pkt_seq = self.packet_seq
         self.packet_seq = (self.packet_seq + 1) & 0x3FFF
         pkt = services.build_tc_packet(service, pkt_seq, app)
@@ -115,7 +115,7 @@ class GroundStation:
         for attempt in range(1, FOP_TRIES + 1):
             if attempt > 1:
                 self.retransmissions += 1
-                self.log(f"[FOP] Sin confirmacion de N(S)={ns}: retransmito (intento {attempt}, IV nuevo)")
+                self.log(f"[FOP] No confirmation for N(S)={ns}: sending again (try {attempt}, new IV)")
             start = self.tm_count
             self._send_frame(pkt, ns)
             confirmed = self._wait(
@@ -123,16 +123,16 @@ class GroundStation:
                 (self.last_clcw.report_value == (ns + 1) & 0xFF or self.last_clcw.lockout),
                 FOP_TIMEOUT)
             if confirmed and self.last_clcw.lockout:
-                self.log("[FOP] El FARM del satelite esta BLOQUEADO (lockout). Escribe 'sync'.")
+                self.log("[FOP] The satellite FARM is in LOCKOUT. Type 'sync'.")
                 return None
             if confirmed:
                 self.vs = (ns + 1) & 0xFF
                 return pkt_seq
-        self.log(f"[FOP] La trama N(S)={ns} no se confirmo tras {FOP_TRIES} intentos.")
+        self.log(f"[FOP] Frame N(S)={ns} was not confirmed after {FOP_TRIES} tries.")
         return None
 
     def send_bc(self, command: bytes) -> bool:
-        """Comando de control del FARM (trama BC), esperando su confirmacion."""
+        """FARM control command (BC frame), waiting for its confirmation."""
         for _ in range(FOP_TRIES):
             start = self.tm_count
             self._send_frame(command, 0, bypass=True, control=True)
@@ -143,8 +143,8 @@ class GroundStation:
 
     def sync(self) -> bool:
         ok = self.send_bc(cop1.UNLOCK) and self.send_bc(cop1.set_vr(self.vs))
-        self.log("[FOP] FARM desbloqueado y alineado: V(R) = %d" % self.vs if ok else
-                 "[FOP] No se pudo sincronizar el FARM")
+        self.log("[FOP] FARM unlocked and aligned: V(R) = %d" % self.vs if ok else
+                 "[FOP] Could not sync the FARM")
         return ok
 
     def wait_ack(self, pkt_seq, timeout: float = 2.0):
@@ -154,49 +154,49 @@ class GroundStation:
             return self.acks.pop(pkt_seq)
         return None
 
-    # --------------------------- rotacion ------------------------------
+    # --------------------------- rotation ------------------------------
     def rotate(self) -> bool:
         new_id = max([self.ks.active_id] + self.ks.data["retired"]) + 1
         tc_new, tm_new = secrets.token_bytes(32), secrets.token_bytes(32)
-        self.ks.set_pending(new_id, tc_new, tm_new)   # guardadas antes de enviarlas
+        self.ks.set_pending(new_id, tc_new, tm_new)   # saved before sending them
         block = sdls.otar_wrap(self.ks.kek, new_id, tc_new, tm_new)
-        self.log(f"[OTAR] Subo las claves ID {new_id}, envueltas con la KEK ({len(block)} bytes)")
+        self.log(f"[OTAR] Uploading keys ID {new_id}, wrapped with the KEK ({len(block)} bytes)")
         ack = self.wait_ack(self.send_ad(services.TC_OTAR_UPLOAD, bytes([new_id]) + block))
         if not ack or not ack[0]:
-            motivo = services.FAIL_CODES.get(ack[1], "") if ack else "sin respuesta"
-            self.log(f"[OTAR] El satelite no acepto las claves: {motivo}")
+            reason = services.FAIL_CODES.get(ack[1], "") if ack else "no answer"
+            self.log(f"[OTAR] The satellite did not accept the keys: {reason}")
             return False
         self.pending_tm_sa = sdls.SecurityAssociation(sdls.SPI_TM, tm_new)
         self.pending_tm_sa.last_iv = self.tm_sa.last_iv
-        self.log(f"[OTAR] Claves recibidas a bordo. Las activo (ID {new_id})")
+        self.log(f"[OTAR] Keys received on board. Activating them (ID {new_id})")
         ack = self.wait_ack(self.send_ad(services.TC_OTAR_ACTIVATE, bytes([new_id])))
         if not ack or not ack[0] or self.pending_tm_sa is not None:
-            self.log("[OTAR] No se confirmo la activacion. Revisa 'estado'.")
+            self.log("[OTAR] Activation was not confirmed. Check 'status'.")
             return False
         return True
 
     def _commit_rotation(self):
-        """El satelite ya habla con la clave nueva: la tierra cambia tambien."""
+        """The satellite already uses the new key: ground changes too."""
         key_id, tc_new, tm_new = self.ks.pending()
         self.tm_sa.set_key(tm_new)
         self.tm_sa.last_iv = self.pending_tm_sa.last_iv
         self.tc_sa.set_key(tc_new)
         self.pending_tm_sa = None
         self.ks.activate_pending()
-        self.log(f"[OTAR] Rotacion completada: clave ID {key_id} activa. La anterior queda retirada.")
+        self.log(f"[OTAR] Rotation done: key ID {key_id} is active. The old one is retired.")
 
-    # ----------------------------- recepcion ---------------------------
+    # ----------------------------- receiving ---------------------------
     def handle_datagram(self, data: bytes, show_hk: bool = False):
         try:
             tm = sdls.parse_secure_tm_frame(self.tm_sa, data)
         except (CcsdsError, SdlsError) as first:
             if self.pending_tm_sa is None:
-                self.log(f"\n[TM] trama descartada ({first}): no viene del satelite o esta manipulada")
+                self.log(f"\n[TM] frame discarded ({first}): not from the satellite, or modified")
                 return
             try:
                 tm = sdls.parse_secure_tm_frame(self.pending_tm_sa, data)
             except (CcsdsError, SdlsError):
-                self.log(f"\n[TM] trama descartada ({first})")
+                self.log(f"\n[TM] frame discarded ({first})")
                 return
             self._commit_rotation()
         with self.cond:
@@ -220,11 +220,11 @@ class GroundStation:
             self.acks[int.from_bytes(app[:2], "big")] = (False, app[2])
         elif service == services.TM_SEC_EVENT:
             self.events.append(services.decode_sec_event(app))
-            self.log(f"\n[SEGURIDAD] {services.decode_tm_packet(pkt)}")
+            self.log(f"\n[SECURITY] {services.decode_tm_packet(pkt)}")
             return
         elif service == services.TM_EVENTS_SUPPRESSED:
             self.suppressed += int.from_bytes(app[:2], "big")
-            self.log(f"\n[SEGURIDAD] {services.decode_tm_packet(pkt)}")
+            self.log(f"\n[SECURITY] {services.decode_tm_packet(pkt)}")
             return
         self.log(f"\n[TM #{mc}] {services.decode_tm_packet(pkt)}")
 
@@ -242,37 +242,37 @@ class GroundStation:
 
     def print_status(self):
         if self.last_hk is None:
-            print("Todavia no ha llegado ningun housekeeping. Prueba con 'hk'.")
+            print("No housekeeping received yet. Try 'hk'.")
             return
         hk = self.last_hk
         age = time.time() - self.last_hk_time
-        print(f"Ultimo HK autenticado (hace {age:.0f} s):")
-        print(f"  tiempo encendido     {hk.uptime_s} s")
-        print(f"  clave activa         ID {hk.key_id} (tierra: ID {self.ks.active_id})")
-        print(f"  TC aceptados         {hk.tc_accepted}")
-        print(f"  tramas rotas         {hk.tc_rejected}")
-        print(f"  descartes del FARM   {hk.farm_discards}")
-        print(f"  rechazos seguridad   sin SDLS/SPI {hk.sec_spi} | MAC invalida {hk.sec_mac}"
-              f" | replay {hk.sec_replay} | eventos resumidos {hk.events_suppressed}")
-        print(f"  carga util (RGB)     {hk.payload_rgb}")
-        print(f"  RSSI Wi-Fi           {hk.rssi_dbm} dBm")
+        print(f"Last authenticated HK ({age:.0f} s ago):")
+        print(f"  uptime               {hk.uptime_s} s")
+        print(f"  active key           ID {hk.key_id} (ground: ID {self.ks.active_id})")
+        print(f"  TC accepted          {hk.tc_accepted}")
+        print(f"  broken frames        {hk.tc_rejected}")
+        print(f"  FARM discards        {hk.farm_discards}")
+        print(f"  security rejections  no SDLS/SPI {hk.sec_spi} | invalid MAC {hk.sec_mac}"
+              f" | replay {hk.sec_replay} | summarized events {hk.events_suppressed}")
+        print(f"  payload (RGB)        {hk.payload_rgb}")
+        print(f"  Wi-Fi RSSI           {hk.rssi_dbm} dBm")
         if self.last_clcw is not None:
             c = self.last_clcw
-            estado = "BLOQUEADO" if c.lockout else ("pide retransmision" if c.retransmit else "normal")
-            print(f"  FARM (CLCW)          espera N(S)={c.report_value}, estado {estado}")
-        print(f"  FOP                  siguiente N(S)={self.vs}, retransmisiones {self.retransmissions}")
+            state = "LOCKOUT" if c.lockout else ("asks for retransmit" if c.retransmit else "normal")
+            print(f"  FARM (CLCW)          expects N(S)={c.report_value}, state {state}")
+        print(f"  FOP                  next N(S)={self.vs}, retransmissions {self.retransmissions}")
         if age > 12:
-            print("  AVISO: hace rato que no llega HK. Comprueba que el satelite sigue encendido.")
+            print("  WARNING: no HK for a while. Check that the satellite is still on.")
 
 
 def main(argv=None) -> int:
-    p = argparse.ArgumentParser(description="Estacion de tierra (fase 3: SDLS + OTAR + COP-1)")
-    p.add_argument("--sat", required=True, help="IP del C5 (la ves en el Monitor Serie)")
+    p = argparse.ArgumentParser(description="Ground station (phase 3: SDLS + OTAR + COP-1)")
+    p.add_argument("--sat", required=True, help="IP of the C5 (you see it in the Serial Monitor)")
     p.add_argument("--sat-port", type=int, default=TC_PORT, help=argparse.SUPPRESS)
     p.add_argument("--local-port", type=int, default=LOCAL_PORT, help=argparse.SUPPRESS)
-    p.add_argument("--ver-hk", action="store_true", help="mostrar cada HK periodico (cada 5 s)")
-    p.add_argument("--perdida", type=float, default=0.0,
-                   help="probabilidad de perder cada telecomando (0 a 0.9), para ver el FOP en accion")
+    p.add_argument("--show-hk", action="store_true", help="show every periodic HK (every 5 s)")
+    p.add_argument("--loss", type=float, default=0.0,
+                   help="chance to lose each telecommand (0 to 0.9), to see the FOP working")
     args = p.parse_args(argv)
 
     try:
@@ -281,55 +281,55 @@ def main(argv=None) -> int:
         print(e)
         return 1
     try:
-        gs = GroundStation(args.sat, ks, args.sat_port, args.local_port, loss=min(max(args.perdida, 0), 0.9))
+        gs = GroundStation(args.sat, ks, args.sat_port, args.local_port, loss=min(max(args.loss, 0), 0.9))
     except OSError:
-        print(f"El puerto {args.local_port} ya esta en uso: seguramente tienes otra consola de tierra"
-              " abierta. Cierrala (escribe 'salir' o pulsa Ctrl+C) o usa otro puerto:"
+        print(f"Port {args.local_port} is already in use: probably another ground console is"
+              " open. Close it (type 'quit' or press Ctrl+C) or use another port:"
               f" --local-port {args.local_port + 1}")
         return 1
-    threading.Thread(target=gs.receive_loop, args=(args.ver_hk,), daemon=True).start()
+    threading.Thread(target=gs.receive_loop, args=(args.show_hk,), daemon=True).start()
 
-    print(f"Estacion de tierra lista. Satelite en {args.sat}:{args.sat_port}, SCID 0x{SCID:03X}.")
-    print(f"Fase 3: SDLS + OTAR + COP-1. Clave activa: ID {ks.active_id}.")
-    if args.perdida:
-        print(f"Canal simulado: se pierde el {args.perdida:.0%} de los telecomandos.")
-    print(AYUDA)
+    print(f"Ground station ready. Satellite at {args.sat}:{args.sat_port}, SCID 0x{SCID:03X}.")
+    print(f"Phase 3: SDLS + OTAR + COP-1. Active key: ID {ks.active_id}.")
+    if args.loss:
+        print(f"Simulated channel: {args.loss:.0%} of the telecommands are lost.")
+    print(HELP)
     gs.sync()
     gs.send_ad(services.TC_PING)
 
     while True:
         try:
-            line = input("\ntierra> ").strip().lower()
+            line = input("\nground> ").strip().lower()
         except (EOFError, KeyboardInterrupt):
             break
         if not line:
             continue
         parts = line.split()
         cmd = parts[0]
-        if cmd == "salir":
+        if cmd == "quit":
             break
-        elif cmd == "ayuda":
-            print(AYUDA)
+        elif cmd == "help":
+            print(HELP)
         elif cmd == "ping":
             gs.send_ad(services.TC_PING)
         elif cmd == "hk":
             gs.send_ad(services.TC_REQUEST_HK)
             time.sleep(0.3)
             gs.print_status()
-        elif cmd == "estado":
+        elif cmd == "status":
             gs.print_status()
         elif cmd == "sync":
             gs.sync()
-        elif cmd == "rotar":
+        elif cmd == "rotate":
             gs.rotate()
-        elif cmd == "color" and len(parts) == 2 and parts[1] in COLORES:
-            gs.send_ad(services.TC_SET_COLOR, bytes(COLORES[parts[1]]))
+        elif cmd == "color" and len(parts) == 2 and parts[1] in COLORS:
+            gs.send_ad(services.TC_SET_COLOR, bytes(COLORS[parts[1]]))
         else:
-            print("No entiendo ese comando. Escribe 'ayuda'.")
+            print("I don't know that command. Type 'help'.")
         time.sleep(0.2)
 
     gs.running = False
-    print("Estacion de tierra cerrada.")
+    print("Ground station closed.")
     return 0
 
 

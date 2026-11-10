@@ -1,10 +1,10 @@
 """
-Satelite simulado en Python - fase 3 (SDLS + OTAR + FARM-1 + limite de eventos).
+Simulated satellite in Python - phase 3 (SDLS + OTAR + FARM-1 + event limit).
 
-Reproduce en el PC el comportamiento de satellite/satellite_f3/satellite_f3.ino.
-Arranca con la KEK y las claves activas de ground/keys_f3.json.
+Does on the PC the same as satellite/satellite_f3/satellite_f3.ino.
+It starts with the KEK and the active keys from ground/keys_f3.json.
 
-Uso:
+Usage:
     py tools\\fake_satellite_f3.py
     py ground\\gs_f3.py --sat 127.0.0.1
 """
@@ -58,7 +58,7 @@ class FakeSatellite:
         if self.verbose:
             print(msg)
 
-    # ----------------------------- telemetria -----------------------------
+    # ----------------------------- telemetry ------------------------------
     def send_tm(self, service, app=b""):
         if self.ground is None:
             return
@@ -66,7 +66,7 @@ class FakeSatellite:
         self.tm_seq = (self.tm_seq + 1) & 0x3FFF
         self.tm_iv += 1
         frame = sdls.build_secure_tm_frame(self.tm_sa, pkt, self.mc, self.vc, 0, self.tm_iv)
-        # sustituimos la CLCW por la del FARM (y recalculamos el CRC)
+        # put the FARM CLCW in place (and compute the CRC again)
         frame = bytearray(frame)
         frame[-6:-2] = self.farm.clcw().to_bytes(4, "big")
         crc = frames.crc16(bytes(frame[:-2]))
@@ -108,12 +108,12 @@ class FakeSatellite:
             self.send_tm(services.TM_EVENTS_SUPPRESSED, struct.pack(">H", self.suppressed_pending))
             self.suppressed_pending = 0
 
-    # ---------------------------- telecomandos ----------------------------
+    # ---------------------------- telecommands ----------------------------
     def handle(self, data, addr):
         try:
             f = frames.parse_tc_frame(data)
             if f.scid != frames.SCID or f.vcid != frames.VCID:
-                raise CcsdsError("SCID o canal ajeno")
+                raise CcsdsError("SCID or channel is not ours")
         except CcsdsError:
             self.rejected += 1
             return
@@ -128,7 +128,7 @@ class FakeSatellite:
 
         if f.bypass and f.control:
             ok = self.farm.on_bc(tc.packet) == cop1.CONTROL_OK
-            self.log(f"[SIM] BC: {'ok' if ok else 'no valido'}, V(R)={self.farm.vr}")
+            self.log(f"[SIM] BC: {'ok' if ok else 'invalid'}, V(R)={self.farm.vr}")
             return self.ack(0xFFFF) if ok else self.nack(0xFFFF, 32)
         if not f.bypass:
             r = self.farm.on_ad(f.seq)
@@ -148,7 +148,7 @@ class FakeSatellite:
         try:
             p = frames.parse_space_packet(packet)
             if len(packet) != 6 + len(p.data) or p.type != 1 or p.apid != frames.APID_SAT or len(p.data) < 2:
-                raise CcsdsError("paquete mal formado")
+                raise CcsdsError("bad packet")
         except CcsdsError:
             self.rejected += 1
             return self.nack(0xFFFF, 10)
@@ -157,7 +157,7 @@ class FakeSatellite:
             self.send_tm(services.TM_PONG)
         elif service == services.TC_SET_COLOR and len(app) == 3:
             self.payload = tuple(app)
-            self.log(f"[SIM] Carga util: color = {self.payload}")
+            self.log(f"[SIM] Payload: color = {self.payload}")
             self.ack(p.seq_count)
         elif service == services.TC_REQUEST_HK:
             self.send_hk()
@@ -174,7 +174,7 @@ class FakeSatellite:
                 self.rejected += 1
                 return self.nack(p.seq_count, 40)
             self.pending = (app[0], tc, tm)
-            self.log(f"[SIM] OTAR: claves ID {app[0]} pendientes")
+            self.log(f"[SIM] OTAR: keys ID {app[0]} pending")
             self.ack(p.seq_count)
         elif service == services.TC_OTAR_ACTIVATE:
             if len(app) != 1 or not self.pending or self.pending[0] != app[0]:
@@ -184,7 +184,7 @@ class FakeSatellite:
             self.tc_sa.set_key(tc)
             self.tm_sa.set_key(tm)
             self.pending = None
-            self.log(f"[SIM] Claves ID {self.key_id} activas")
+            self.log(f"[SIM] Keys ID {self.key_id} active")
             self.ack(p.seq_count)
         else:
             self.rejected += 1
@@ -205,7 +205,7 @@ class FakeSatellite:
         self.handle(data, addr)
 
     def run(self):
-        print(f"[SIM] Satelite simulado (fase 3) escuchando en {self.sock.getsockname()}, clave ID {self.key_id}")
+        print(f"[SIM] Simulated satellite (phase 3) listening on {self.sock.getsockname()}, key ID {self.key_id}")
         while True:
             self.step()
 

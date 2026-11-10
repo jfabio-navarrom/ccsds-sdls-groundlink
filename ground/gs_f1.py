@@ -1,19 +1,19 @@
 """
-Consola de la estacion de tierra - fase 1 (CCSDS, SIN seguridad).
+Ground station console - phase 1 (CCSDS, NO security).
 
-Envia telecomandos como tramas TC CCSDS reales y muestra la telemetria
-(tramas TM) que devuelve el satelite.
+Sends telecommands as real CCSDS TC frames and shows the telemetry
+(TM frames) that the satellite sends back.
 
-Uso (en PowerShell, desde la carpeta del proyecto):
+Usage (in PowerShell, from the project folder):
     py ground\\gs_f1.py --sat 192.168.33.105
 
-Comandos dentro de la consola:
-    ping              comprobar que el satelite responde
-    color <nombre>    poner la carga util de un color (verde, azul, amarillo, blanco, apagado)
-    hk                pedir un informe de housekeeping ahora
-    estado            ver el ultimo housekeeping recibido
-    ayuda             ver esta lista
-    salir             cerrar la consola
+Commands inside the console:
+    ping              check that the satellite answers
+    color <name>      set the payload to a color (green, blue, yellow, white, off)
+    hk                ask for a housekeeping report now
+    status            show the last housekeeping received
+    help              show this list
+    quit              close the console
 """
 
 import argparse
@@ -31,20 +31,20 @@ from ccsds.frames import CcsdsError  # noqa: E402
 TC_PORT = 10025
 LOCAL_PORT = 10015
 
-COLORES = {
-    "verde": (0, 200, 0),
-    "azul": (0, 90, 255),
-    "amarillo": (255, 200, 0),
-    "blanco": (255, 255, 255),
-    "apagado": (0, 0, 0),
+COLORS = {
+    "green": (0, 200, 0),
+    "blue": (0, 90, 255),
+    "yellow": (255, 200, 0),
+    "white": (255, 255, 255),
+    "off": (0, 0, 0),
 }
 
-AYUDA = """Comandos:
-  ping              comprobar que el satelite responde
-  color <nombre>    verde | azul | amarillo | blanco | apagado
-  hk                pedir un informe de housekeeping ahora
-  estado            ver el ultimo housekeeping recibido
-  salir             cerrar la consola"""
+HELP = """Commands:
+  ping              check that the satellite answers
+  color <name>      green | blue | yellow | white | off
+  hk                ask for a housekeeping report now
+  status            show the last housekeeping received
+  quit              close the console"""
 
 
 class GroundStation:
@@ -53,15 +53,15 @@ class GroundStation:
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind(("0.0.0.0", local_port))
         self.sock.settimeout(0.5)
-        self.frame_seq = 0      # N(S): numero de secuencia de trama TC
-        self.packet_seq = 0     # contador de paquetes TC
+        self.frame_seq = 0      # N(S): TC frame sequence number
+        self.packet_seq = 0     # TC packet counter
         self.last_hk = None
         self.last_hk_time = None
         self.last_clcw = None
         self.running = True
         self.lock = threading.Lock()
 
-    # ---------- envio ----------
+    # ---------- sending ----------
     def send(self, service: tuple, app_data: bytes = b"") -> bytes:
         with self.lock:
             pkt = services.build_tc_packet(service, self.packet_seq, app_data)
@@ -69,10 +69,10 @@ class GroundStation:
             self.packet_seq = (self.packet_seq + 1) & 0x3FFF
             self.frame_seq = (self.frame_seq + 1) & 0xFF
         self.sock.sendto(frame, self.sat)
-        print(f"[AIRE] TC enviado ({len(frame)} bytes): {frame.hex()}")
+        print(f"[AIR] TC sent ({len(frame)} bytes): {frame.hex()}")
         return frame
 
-    # ---------- recepcion ----------
+    # ---------- receiving ----------
     def receive_loop(self, show_hk: bool = False):
         while self.running:
             try:
@@ -80,12 +80,12 @@ class GroundStation:
             except socket.timeout:
                 continue
             except (ConnectionResetError, OSError):
-                # En Windows, un ICMP "puerto inalcanzable" llega como error: lo ignoramos
+                # On Windows an ICMP "port unreachable" comes back as an error: ignore it
                 continue
             try:
                 tm = frames.parse_tm_frame(data)
             except CcsdsError as e:
-                print(f"\n[TM] trama descartada: {e}")
+                print(f"\n[TM] frame discarded: {e}")
                 continue
             self.last_clcw = tm.clcw
             for pkt in tm.packets:
@@ -99,76 +99,76 @@ class GroundStation:
 
     def print_status(self):
         if self.last_hk is None:
-            print("Todavia no ha llegado ningun housekeeping. Prueba con 'hk'.")
+            print("No housekeeping received yet. Try 'hk'.")
             return
         hk = self.last_hk
         age = time.time() - self.last_hk_time
-        print(f"Ultimo HK (hace {age:.0f} s):")
-        print(f"  tiempo encendido   {hk.uptime_s} s")
-        print(f"  TC aceptados       {hk.tc_accepted}")
-        print(f"  TC rechazados      {hk.tc_rejected}")
-        print(f"  ultima secuencia   {hk.last_frame_seq}")
-        print(f"  carga util (RGB)   {hk.payload_rgb}")
-        print(f"  RSSI Wi-Fi         {hk.rssi_dbm} dBm")
-        print(f"  memoria libre      {hk.free_heap} bytes")
+        print(f"Last HK ({age:.0f} s ago):")
+        print(f"  uptime             {hk.uptime_s} s")
+        print(f"  TC accepted        {hk.tc_accepted}")
+        print(f"  TC rejected        {hk.tc_rejected}")
+        print(f"  last sequence      {hk.last_frame_seq}")
+        print(f"  payload (RGB)      {hk.payload_rgb}")
+        print(f"  Wi-Fi RSSI         {hk.rssi_dbm} dBm")
+        print(f"  free heap          {hk.free_heap} bytes")
         if self.last_clcw is not None:
-            print(f"  CLCW: el satelite espera la trama #{self.last_clcw.report_value}")
+            print(f"  CLCW: the satellite expects frame #{self.last_clcw.report_value}")
         if age > 12:
-            print("  AVISO: hace rato que no llega HK. ¿Alguien ha suplantado a la tierra?"
-                  " Envia cualquier comando para recuperar la telemetria.")
+            print("  WARNING: no HK for a while. Did someone impersonate the ground station?"
+                  " Send any command to get the telemetry back.")
 
 
 def main(argv=None) -> int:
-    p = argparse.ArgumentParser(description="Estacion de tierra (fase 1, CCSDS)")
-    p.add_argument("--sat", required=True, help="IP del C5 (la ves en el Monitor Serie)")
+    p = argparse.ArgumentParser(description="Ground station (phase 1, CCSDS)")
+    p.add_argument("--sat", required=True, help="IP of the C5 (you see it in the Serial Monitor)")
     p.add_argument("--sat-port", type=int, default=TC_PORT, help=argparse.SUPPRESS)
     p.add_argument("--local-port", type=int, default=LOCAL_PORT, help=argparse.SUPPRESS)
-    p.add_argument("--ver-hk", action="store_true", help="mostrar cada HK periodico (cada 5 s)")
+    p.add_argument("--show-hk", action="store_true", help="show every periodic HK (every 5 s)")
     args = p.parse_args(argv)
 
     try:
         gs = GroundStation(args.sat, args.sat_port, args.local_port)
     except OSError:
-        print(f"El puerto {args.local_port} ya esta en uso: seguramente tienes otra consola de tierra"
-              " abierta. Cierrala (escribe 'salir' o pulsa Ctrl+C) o usa otro puerto:"
+        print(f"Port {args.local_port} is already in use: probably another ground console is"
+              " open. Close it (type 'quit' or press Ctrl+C) or use another port:"
               f" --local-port {args.local_port + 1}")
         return 1
-    threading.Thread(target=gs.receive_loop, args=(args.ver_hk,), daemon=True).start()
+    threading.Thread(target=gs.receive_loop, args=(args.show_hk,), daemon=True).start()
 
-    print(f"Estacion de tierra lista. Satelite en {args.sat}:{args.sat_port}, SCID 0x{frames.SCID:03X}.")
-    print("AVISO: fase 1, enlace SIN seguridad.")
-    print(AYUDA)
+    print(f"Ground station ready. Satellite at {args.sat}:{args.sat_port}, SCID 0x{frames.SCID:03X}.")
+    print("WARNING: phase 1, link with NO security.")
+    print(HELP)
     gs.send(services.TC_PING)
 
     while True:
         try:
-            line = input("\ntierra> ").strip().lower()
+            line = input("\nground> ").strip().lower()
         except (EOFError, KeyboardInterrupt):
             break
         if not line:
             continue
         parts = line.split()
         cmd = parts[0]
-        if cmd == "salir":
+        if cmd == "quit":
             break
-        elif cmd == "ayuda":
-            print(AYUDA)
+        elif cmd == "help":
+            print(HELP)
         elif cmd == "ping":
             gs.send(services.TC_PING)
         elif cmd == "hk":
             gs.send(services.TC_REQUEST_HK)
             time.sleep(0.5)
             gs.print_status()
-        elif cmd == "estado":
+        elif cmd == "status":
             gs.print_status()
-        elif cmd == "color" and len(parts) == 2 and parts[1] in COLORES:
-            gs.send(services.TC_SET_COLOR, bytes(COLORES[parts[1]]))
+        elif cmd == "color" and len(parts) == 2 and parts[1] in COLORS:
+            gs.send(services.TC_SET_COLOR, bytes(COLORS[parts[1]]))
         else:
-            print("No entiendo ese comando. Escribe 'ayuda'.")
-        time.sleep(0.3)  # deja que llegue la respuesta antes del siguiente prompt
+            print("I don't know that command. Type 'help'.")
+        time.sleep(0.3)  # let the answer arrive before the next prompt
 
     gs.running = False
-    print("Estacion de tierra cerrada.")
+    print("Ground station closed.")
     return 0
 
 
