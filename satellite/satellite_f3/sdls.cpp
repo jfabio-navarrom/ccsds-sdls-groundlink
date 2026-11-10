@@ -25,6 +25,10 @@ bool saInit(SecurityAssociation& sa, uint16_t spi, const uint8_t key[KEY_LEN]) {
 }
 
 bool saSetKey(SecurityAssociation& sa, const uint8_t key[KEY_LEN]) {
+  // Contexto nuevo desde cero: en el ESP32 el GCM va por hardware y no
+  // conviene reutilizar un contexto ya inicializado con otra clave.
+  mbedtls_gcm_free(&sa.gcm);
+  mbedtls_gcm_init(&sa.gcm);
   return mbedtls_gcm_setkey(&sa.gcm, MBEDTLS_CIPHER_ID_AES, key, KEY_LEN * 8) == 0;
 }
 
@@ -43,11 +47,14 @@ bool otarUnwrap(mbedtls_gcm_context& kek, uint8_t keyId, const uint8_t block[OTA
 }
 
 bool kekFingerprint(mbedtls_gcm_context& kek, uint8_t out[8]) {
+  // Ciframos un bloque fijo de 16 bytes (no un mensaje vacio: algunas
+  // implementaciones por hardware no aceptan longitud 0) y usamos la MAC.
   const uint8_t iv[IV_LEN] = {0};
   const uint8_t aad[2] = {'F', 'P'};
-  uint8_t tag[MAC_LEN];
-  if (mbedtls_gcm_crypt_and_tag(&kek, MBEDTLS_GCM_ENCRYPT, 0, iv, IV_LEN, aad, sizeof(aad),
-                                nullptr, nullptr, MAC_LEN, tag) != 0) {
+  const uint8_t in[16] = {0};
+  uint8_t ct[16], tag[MAC_LEN];
+  if (mbedtls_gcm_crypt_and_tag(&kek, MBEDTLS_GCM_ENCRYPT, sizeof(in), iv, IV_LEN, aad, sizeof(aad),
+                                in, ct, MAC_LEN, tag) != 0) {
     return false;
   }
   memcpy(out, tag, 8);

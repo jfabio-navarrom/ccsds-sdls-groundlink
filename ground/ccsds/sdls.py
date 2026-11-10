@@ -216,4 +216,4 @@ def otar_unwrap(kek: bytes, key_id: int, block: bytes) -> tuple:
 
 
 def kek_fingerprint(kek: bytes) -> bytes:
-    return AESGCM(kek).encrypt(bytes(IV_LEN), b"", b"FP")[:8]
+    return AESGCM(kek).encrypt(bytes(IV_LEN), bytes(16), b"FP")[16:24]

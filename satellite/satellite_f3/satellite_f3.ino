@@ -144,18 +144,22 @@ uint64_t nextTmIv() {
 // Claves activas en la flash: [huella KEK 8][ID 1][TC 32][TM 32]
 void saveActiveKeys(const uint8_t tc[KEY_LEN], const uint8_t tm[KEY_LEN]) {
   uint8_t rec[8 + 1 + 2 * KEY_LEN];
-  kekFingerprint(kekCtx, rec);
+  if (!kekFingerprint(kekCtx, rec)) {
+    Serial.println("[SAT] ERROR: no pude calcular la huella de la KEK; las claves no se guardan en la flash");
+    return;
+  }
   rec[8] = activeKeyId;
   memcpy(rec + 9, tc, KEY_LEN);
   memcpy(rec + 9 + KEY_LEN, tm, KEY_LEN);
-  nvs.putBytes("keys", rec, sizeof(rec));
+  size_t written = nvs.putBytes("keys", rec, sizeof(rec));
   memset(rec, 0, sizeof(rec));
+  Serial.printf("[SAT] Claves ID %u guardadas en la flash (%s)\n", activeKeyId,
+                written == sizeof(rec) ? "OK" : "ERROR al escribir");
 }
 
 void loadKeys() {
   uint8_t rec[8 + 1 + 2 * KEY_LEN], fp[8];
-  kekFingerprint(kekCtx, fp);
-  bool ok = nvs.getBytesLength("keys") == sizeof(rec) && nvs.getBytes("keys", rec, sizeof(rec)) == sizeof(rec) &&
+  bool ok = kekFingerprint(kekCtx, fp) && nvs.getBytesLength("keys") == sizeof(rec) && nvs.getBytes("keys", rec, sizeof(rec)) == sizeof(rec) &&
             memcmp(rec, fp, 8) == 0;
   if (ok) {
     activeKeyId = rec[8];
@@ -313,8 +317,11 @@ bool handleKeys(uint8_t sub, const uint8_t* app, size_t appLen, uint16_t pktSeq)
       sendAckFail(pktSeq, FAIL_OTAR_NO_PENDING);
       return false;
     }
-    saSetKey(tcSa, pendingTc);
-    saSetKey(tmSa, pendingTm);
+    if (!saSetKey(tcSa, pendingTc) || !saSetKey(tmSa, pendingTm)) {
+      Serial.println("[SAT] ERROR: no pude cargar las claves nuevas");
+      sendAckFail(pktSeq, FAIL_OTAR_INVALID);
+      return false;
+    }
     activeKeyId = pendingKeyId;
     saveActiveKeys(pendingTc, pendingTm);
     memset(pendingTc, 0, KEY_LEN);   // destruir las copias en RAM
