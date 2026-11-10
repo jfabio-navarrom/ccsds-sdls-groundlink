@@ -1,0 +1,113 @@
+"""
+Policy-as-code (fase 4): la base de datos de SA documentada debe coincidir con
+lo que implementan tierra (Python) y satelite (C++). Si alguien cambia una
+longitud o un SPI en el codigo y no actualiza la documentacion, esto falla.
+
+Tambien prueba la logica de tools/check_policy.py sin necesitar Conftest.
+"""
+
+import datetime as dt
+import json
+import os
+import re
+import sys
+import unittest
+
+ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+sys.path.insert(0, os.path.join(ROOT, "ground"))
+sys.path.insert(0, os.path.join(ROOT, "tools"))
+
+try:
+    import yaml
+except ImportError:  # en el PC de Fabio puede no estar instalado
+    yaml = None
+
+from ccsds import frames, sdls  # noqa: E402
+
+ARQ = os.path.join(ROOT, "docs", "arquitectura")
+
+
+def load(name):
+    with open(os.path.join(ARQ, name), encoding="utf-8") as fh:
+        return yaml.safe_load(fh)
+
+
+def cpp_const(path, name):
+    with open(os.path.join(ROOT, path), encoding="utf-8") as fh:
+        m = re.search(rf"const \w+ {name} = (0x[0-9A-Fa-f]+|\d+);", fh.read())
+    return int(m.group(1), 0)
+
+
+@unittest.skipIf(yaml is None, "falta PyYAML (py -m pip install pyyaml)")
+class TestSaDatabase(unittest.TestCase):
+    def setUp(self):
+        self.db = load("groundlink.sdls.yaml")
+        self.sas = {sa["spi"]: sa for sa in self.db["security_associations"]}
+
+    def test_spis(self):
+        self.assertEqual(self.sas[sdls.SPI_TC]["protocol"], "TC")
+        self.assertEqual(self.sas[sdls.SPI_TM]["protocol"], "TM")
+        self.assertEqual(cpp_const("satellite/satellite_f3/sdls.h", "SPI_TC"), sdls.SPI_TC)
+        self.assertEqual(cpp_const("satellite/satellite_f3/sdls.h", "SPI_TM"), sdls.SPI_TM)
+
+    def test_parametros_criptograficos(self):
+        for sa in self.sas.values():
+            self.assertEqual(sa["service"], "authenticated_encryption")
+            self.assertEqual(sa["algorithm"], {"cipher": "AES", "mode": "GCM", "key_bits": sdls.KEY_LEN * 8})
+            self.assertEqual(sa["iv_length_octets"], sdls.IV_LEN)
+            self.assertEqual(sa["mac_length_octets"], sdls.MAC_LEN)
+            self.assertEqual(sa["sequence_number"]["length_octets"], 0)   # ARSN = IV (ADR-009)
+        for name, value in (("IV_LEN", sdls.IV_LEN), ("MAC_LEN", sdls.MAC_LEN), ("KEY_LEN", sdls.KEY_LEN)):
+            self.assertEqual(cpp_const("satellite/satellite_f3/sdls.h", name), value, name)
+
+    def test_canales(self):
+        scid = cpp_const("satellite/satellite_f3/ccsds.h", "SCID")
+        self.assertEqual(scid, frames.SCID)
+        for vc in self.db["virtual_channels"]:
+            self.assertEqual((vc["gvcid"]["scid"], vc["gvcid"]["vcid"]), (frames.SCID, frames.VCID))
+        tc = next(vc for vc in self.db["virtual_channels"] if vc["protocol"] == "TC")
+        self.assertTrue(tc["cop"])   # FARM-1 activo en la fase 3
+
+    def test_sin_material_de_claves(self):
+        with open(os.path.join(ARQ, "groundlink.sdls.yaml"), encoding="utf-8") as fh:
+            text = fh.read()
+        self.assertIsNone(re.search(r"[0-9a-f]{64}", text))
+        for sa in self.sas.values():
+            self.assertNotIn("key", sa)
+
+    def test_registro_de_riesgos_completo(self):
+        for a in load("riesgos-aceptados.yaml")["aceptaciones"]:
+            for field in ("policy_id", "objetivo", "riesgo", "justificacion", "controles_compensatorios",
+                          "remediacion", "responsable", "revisar_antes"):
+                self.assertIn(field, a, f"{a.get('policy_id')}: falta {field}")
+            for ref in a["controles_compensatorios"]:
+                if "/" in ref or ref.startswith("."):
+                    self.assertTrue(os.path.exists(os.path.join(ROOT, ref)), ref)
+
+
+class TestCheckPolicy(unittest.TestCase):
+    def setUp(self):
+        import check_policy
+        self.cp = check_policy
+        self.out = json.dumps([{"failures": [
+            {"msg": "[SDLS-020] SA spi=1 (x): ...", "metadata": {"policy_id": "SDLS-020"}},
+            {"msg": "[SDLS-020] SA spi=2 (x): ...", "metadata": {"policy_id": "SDLS-020"}},
+        ], "warnings": [{"msg": "[SDLS-022] SA spi=1 (x): ...", "metadata": {"policy_id": "SDLS-022"}}]}])
+        self.acc = [{"policy_id": "SDLS-020", "objetivo": ["spi=1", "spi=2"], "revisar_antes": "2099-01-01"}]
+
+    def test_hallazgo_nuevo(self):
+        found = self.cp.parse_conftest(self.out)
+        problems = self.cp.compare(found, self.acc, dt.date(2026, 1, 1))
+        self.assertEqual(problems, ["HALLAZGO NUEVO (warn): SDLS-022 spi=1"])
+
+    def test_aceptacion_caducada_y_revision_vencida(self):
+        acc = self.acc + [{"policy_id": "MISSION-002", "objetivo": ["spi=1"], "revisar_antes": "2020-01-01"}]
+        found = {("fail", "SDLS-020", "spi=1"), ("fail", "SDLS-020", "spi=2")}
+        problems = self.cp.compare(found, acc, dt.date(2026, 1, 1))
+        self.assertEqual(len(problems), 2)
+        self.assertTrue(problems[0].startswith("ACEPTACION CADUCADA: MISSION-002"))
+        self.assertTrue(problems[1].startswith("REVISION VENCIDA: MISSION-002"))
+
+
+if __name__ == "__main__":
+    unittest.main()

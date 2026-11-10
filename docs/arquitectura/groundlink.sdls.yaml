@@ -1,0 +1,58 @@
+# Base de datos de Security Associations (SA) del enlace ccsds-sdls-groundlink,
+# en el formato de ccsds-policy-as-code (apiVersion sdls.portfolio/v1).
+#
+# Describe lo que esta IMPLEMENTADO en la fase 3, no lo ideal: si el codigo
+# cambia, tests/test_sa_database.py falla hasta que este archivo se actualice.
+# Las desviaciones que detecta el escaneo de politicas estan aceptadas, con
+# justificacion, en riesgos-aceptados.yaml.
+#
+# Aqui no hay material de claves: solo referencias.
+
+apiVersion: sdls.portfolio/v1
+kind: SecurityAssociationDatabase
+metadata:
+  mission: GROUNDLINK-C5
+  owner: jfabio-navarrom
+  legacy_implementation: false
+
+virtual_channels:
+  - name: tc-comandos
+    protocol: TC
+    gvcid: { tfvn: 0, scid: 197, vcid: 0 }   # SCID 0x0C5
+    carries: telecommand
+    cop: true                                # COP-1: FOP en tierra, FARM-1 a bordo
+  - name: tm-telemetria
+    protocol: TM
+    gvcid: { tfvn: 0, scid: 197, vcid: 0 }
+    carries: telemetry
+    cop: false
+
+security_associations:
+  - spi: 1
+    description: Telecomandos, cifrado autenticado
+    protocol: TC
+    gvcids:
+      - { tfvn: 0, scid: 197, vcid: 0 }
+    service: authenticated_encryption
+    algorithm: { cipher: AES, mode: GCM, key_bits: 256 }
+    iv_length_octets: 12
+    # El IV (contador de 64 bits) hace de numero anti-replay: no hay un campo
+    # de secuencia separado en la Security Header, ni ventana (se acepta
+    # cualquier IV mayor que el ultimo). Ver ADR-009 y riesgos-aceptados.yaml.
+    sequence_number: { length_octets: 0, window: 0 }
+    pad_length_octets: 0
+    mac_length_octets: 16
+    key_ref: file://ground/keys_f3.json#active.tc
+
+  - spi: 2
+    description: Telemetria, cifrado autenticado
+    protocol: TM
+    gvcids:
+      - { tfvn: 0, scid: 197, vcid: 0 }
+    service: authenticated_encryption
+    algorithm: { cipher: AES, mode: GCM, key_bits: 256 }
+    iv_length_octets: 12
+    sequence_number: { length_octets: 0, window: 0 }
+    pad_length_octets: 0
+    mac_length_octets: 16
+    key_ref: file://ground/keys_f3.json#active.tm

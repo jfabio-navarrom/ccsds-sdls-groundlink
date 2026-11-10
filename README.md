@@ -35,6 +35,16 @@ Cada rechazo genera un **evento de seguridad** (servicio PUS 5,4) con el motivo,
 | Inundación de 300 tramas falsas | 300 eventos que entierran la telemetría | 3 eventos + 1 resumen; la operación sigue | Límite de eventos (cubo de fichas) |
 | Reinicio del satélite | — | Lockout visible, se resuelve con `sync` | FARM-1 + CLCW |
 
+## Fase 4: arquitectura
+
+| Documento | Qué contiene |
+| --- | --- |
+| [Threat model](docs/arquitectura/THREAT_MODEL.md) | 13 amenazas con técnica SPARTA, control, contramedida, evidencia en placa y riesgo residual |
+| [Trazabilidad NIST SP 800-53](docs/arquitectura/TRAZABILIDAD_NIST.md) | 16 controles: dónde están en el código y qué los demuestra (11 implementados, 3 parciales, 2 pendientes) |
+| [Base de datos de SA](docs/arquitectura/groundlink.sdls.yaml) | La configuración SDLS real como código, comprobada contra el firmware y escaneada con [ccsds-policy-as-code](https://github.com/jfabio-navarrom/ccsds-policy-as-code) |
+| [Riesgos aceptados](docs/arquitectura/riesgos-aceptados.yaml) | Desviaciones aceptadas con justificación, responsable y fecha de revisión; el CI falla si caducan |
+| [Portfolio summary (EN)](docs/PORTFOLIO_EN.md) | Resumen del proyecto en inglés |
+
 ## Qué hay en el repositorio
 
 | Pieza | Archivo | Qué hace |
@@ -55,8 +65,8 @@ Guías paso a paso: [fase 0](GUIA_FASE0.md), [fase 1](GUIA_FASE1.md), [fase 2](G
 1. **F0, preparación:** enlace UDP y control de la pantalla.
 2. **F1, MVP sin seguridad:** tramas TC/TM CCSDS, Space Packets y servicios PUS-lite.
 3. **F2, SDLS:** AES-256-GCM, anti-replay y eventos de seguridad en telemetría.
-4. **F3, claves y FARM:** rekeying en vuelo, FARM-1 y escenarios de bypass e inundación. ← aquí
-5. **F4, arquitectura:** threat model SPARTA, traza NIST SP 800-53, ADRs y policy-as-code.
+4. **F3, claves y FARM:** rekeying en vuelo, FARM-1 y escenarios de bypass e inundación.
+5. **F4, arquitectura:** threat model SPARTA, traza NIST SP 800-53, ADRs y policy-as-code. ✓ Proyecto completo.
 
 ## Decisiones de arquitectura
 
@@ -65,6 +75,7 @@ Guías paso a paso: [fase 0](GUIA_FASE0.md), [fase 1](GUIA_FASE1.md), [fase 2](G
 - [ADR-009: Anti-replay con el IV y contadores que sobreviven a reinicios](docs/adr/ADR-009-anti-replay-y-gestion-de-iv.md)
 - [ADR-010: Rotación de claves en vuelo (OTAR) con una clave maestra](docs/adr/ADR-010-rotacion-de-claves-otar.md)
 - [ADR-011: COP-1 por debajo de SDLS y límite de eventos ante inundación](docs/adr/ADR-011-cop1-e-inundacion.md)
+- [ADR-012: La configuración de seguridad como código, con riesgos aceptados versionados](docs/adr/ADR-012-politicas-como-codigo.md)
 
 ## Ética
 

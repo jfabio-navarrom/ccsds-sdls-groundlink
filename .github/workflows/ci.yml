@@ -15,7 +15,7 @@ jobs:
       - name: Dependencias (mbedTLS para el satelite, cryptography para tierra)
         run: |
           sudo apt-get update -q && sudo apt-get install -y -q libmbedtls-dev
-          pip install cryptography
+          pip install cryptography pyyaml
       - name: Compilar las librerias del satelite (C++)
         run: |
           mkdir -p build
@@ -29,3 +29,35 @@ jobs:
             tests/native/f3_cli.cpp -lmbedcrypto -o build/f3_cli
       - name: Tests de tierra e interoperabilidad
         run: python -m unittest discover -s tests -v
+
+  politicas:
+    # Fase 4: escanea la base de datos de SA del enlace con las politicas de
+    # ccsds-policy-as-code y la compara con el registro de riesgos aceptados.
+    runs-on: ubuntu-latest
+    env:
+      CONFTEST_VERSION: 0.59.0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Descargar las politicas (repo ccsds-policy-as-code)
+        id: politicas
+        run: |
+          if git clone --depth 1 https://github.com/jfabio-navarrom/ccsds-policy-as-code.git ../ccsds-policy-as-code; then
+            echo "disponible=si" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::El repo ccsds-policy-as-code no es accesible; se omite el escaneo de politicas"
+            echo "disponible=no" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Instalar Conftest y PyYAML
+        if: steps.politicas.outputs.disponible == 'si'
+        run: |
+          curl -sSfL -o conftest.tgz \
+            "https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz"
+          tar xzf conftest.tgz conftest
+          sudo mv conftest /usr/local/bin/
+          pip install pyyaml
+      - name: Escanear groundlink.sdls.yaml contra las politicas
+        if: steps.politicas.outputs.disponible == 'si'
+        run: python tools/check_policy.py --politicas ../ccsds-policy-as-code/policy
